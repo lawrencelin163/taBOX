@@ -6,8 +6,9 @@ import urllib.error
 import urllib.request
 
 # taServer base URL and fixed mac token for registration/login.
-taServer_URL = "https://tabox.onrender.com"
-mac_token = "aa04-eaaf-d961-4f40"
+taServer_URL = "https://tabox.onrender.com/api/mac"
+mac_token = "aa04-eaaf-d961-4f40" # yf 的 token
+mac_token = "o3h3-4l81-i9i9-1r0z" # kl 的 token
 
 
 def _read_mac_address(interface: str) -> str:
@@ -24,10 +25,10 @@ def _read_mac_address(interface: str) -> str:
     return mac_clean
 
 
-def taServer_API_mac_login() -> tuple[bool, str]:
+def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
     interface = os.getenv("WIFI_INTERFACE", "wlan0")
     mac_address = _read_mac_address(interface)
-    api_url = f"{taServer_URL}/api/mac/{mac_token}:{mac_address}"
+    api_url = f"{taServer_URL}/{typestr}/{mac_token}:{mac_address}"
     url_info = f"taServer API URL: {api_url}"
 
     req = urllib.request.Request(api_url, method="GET")

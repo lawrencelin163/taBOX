@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/home/yf/GitPS/taBOX
+User=kl
+WorkingDirectory=/home/kl/GitPS/taBOX
 Environment=WIFI_INTERFACE=wlan0
 Environment=HEARTBEAT_INTERVAL_SEC=600
-ExecStart=/home/yf/GitPS/taBOX/env/bin/python /home/yf/GitPS/taBOX/tabox_heartbeat.py
+ExecStart=/home/kl/GitPS/taBOX/env/bin/python /home/kl/GitPS/taBOX/tabox_heartbeat.py
 Restart=always
 RestartSec=5
 

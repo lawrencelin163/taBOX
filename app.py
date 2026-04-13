@@ -276,10 +276,13 @@ def finalize_connected_and_login(ssid: str, source: str) -> None:
         f"[finalize] source={source} ssid={ssid} state={state} ip={ip} "
         "next=wait 3s then taServer login"
     )
-    time.sleep(3)
-    api_ok, api_msg = taServer_API_mac_login()
+    time.sleep(5)
+    api_ok, api_msg = taServer_API_mac_login('login')
     if api_ok:
         log_bootstrap(f"[taServer] {api_msg}")
+        # Start openclaw-gateway.service on successful network connection
+        run_cmd(["sudo", "systemctl", "start", "openclaw-gateway.service"])
+        log_bootstrap("[service] started openclaw-gateway.service")
     else:
         log_bootstrap(f"[taServer] {api_msg}")
 

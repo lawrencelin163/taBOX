@@ -66,12 +66,17 @@ Heartbeat service file is provided at `systemd/tabox-heartbeat.service`.
 Install and enable:
 
 ```bash
-cd /home/yf/GitPS/taBOX
-sudo cp systemd/tabox-provision.service /etc/systemd/system/
-sudo cp systemd/tabox-heartbeat.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable tabox-provision.service
-sudo systemctl start tabox-provision.service
+cd ~/GitPS/taBOX
+./scripts/taBOX_Install.sh
+
+這裏會把這兩個 service， copy 到 system 裏面去.
+另外, openclaw-gateway.service, 也要 copy 哦 :
+
+sudo cp /home/kl/GitPS/taBOX/systemd/openclaw-gateway.service /etc/systemd/system/
+
+只有你安裝並 enable 之後，才會變成開機自動啟動
+sudo systemctl enabled openclaw-gateway.service 
+( 我們改成 由 tabox-provision 來啓動，所以，不要 enable 他)
 ```
 
 Check status:
@@ -111,3 +116,9 @@ Response example:
 ### Fallback Mechanism
 
 If Wi-Fi connection fails in `/connect`, backend will automatically run AP fallback (`systemctl start apmode`) and append that result to the error message shown on the page.
+
+
+### 如果要把 openclaw-gateway.service 刪掉：
+```bash
+sudo systemctl disable openclaw-gateway.service && sudo systemctl stop openclaw-gateway.service && sudo rm /etc/systemd/system/openclaw-gateway.service && sudo systemctl daemon-reload
+```
