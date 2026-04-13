@@ -1,0 +1,17 @@
+[Unit]
+Description=taBOX Heartbeat Service
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/yf/GitPS/taBOX
+Environment=WIFI_INTERFACE=wlan0
+Environment=HEARTBEAT_INTERVAL_SEC=600
+ExecStart=/home/yf/GitPS/taBOX/env/bin/python /home/yf/GitPS/taBOX/tabox_heartbeat.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

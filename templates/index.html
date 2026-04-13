@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>taBOX Wi-Fi 設定</title>
+    <style>
+        body {
+            font-family: "Noto Sans TC", sans-serif;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background: linear-gradient(180deg, #f2f8ff 0%, #eef3f7 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .card {
+            width: min(92vw, 560px);
+            background: #ffffff;
+            border-radius: 14px;
+            padding: 1.5rem;
+            box-shadow: 0 12px 24px rgba(13, 33, 62, 0.12);
+            margin-top: 0;
+        }
+
+        .page-footer {
+            width: 100%;
+            text-align: center;
+            color: #546679;
+            font-size: 0.86rem;
+            line-height: 1.45;
+            padding: 0.8rem 0 1rem;
+        }
+
+        .page-footer .brand {
+            color: #1976d2;
+            text-decoration: underline;
+        }
+
+        .logo-wrap {
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .logo-wrap img {
+            width: min(280px, 60vw);
+            height: auto;
+            display: inline-block;
+        }
+
+        h1 {
+            margin: 0.5rem 0 0.25rem;
+            font-size: 1.35rem;
+            color: #16324f;
+            text-align: center;
+        }
+
+        .hint {
+            margin: 0 0 1.2rem;
+            text-align: center;
+            color: #546679;
+            font-size: 0.95rem;
+        }
+
+        label {
+            display: block;
+            margin: 0.6rem 0 0.35rem;
+            color: #22374d;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        select,
+        input[type="text"] {
+            width: 100%;
+            border: 1px solid #cfd6de;
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+
+        .actions {
+            display: flex;
+            gap: 0.6rem;
+            margin-top: 1rem;
+        }
+
+        button {
+            border: none;
+            border-radius: 8px;
+            padding: 0.72rem 1rem;
+            font-size: 0.98rem;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: #1976d2;
+            color: #fff;
+            flex: 1;
+        }
+
+        .btn-secondary {
+            background: #edf2f7;
+            color: #22374d;
+        }
+
+        .message {
+            margin-top: 0.8rem;
+            border-radius: 8px;
+            padding: 0.7rem 0.8rem;
+            font-size: 0.92rem;
+        }
+
+        .message.success {
+            background: #e8f7ed;
+            color: #1f6a3a;
+            border: 1px solid #bde5ca;
+        }
+
+        .message.error {
+            background: #fdeeee;
+            color: #8e2b2b;
+            border: 1px solid #f3c3c3;
+        }
+
+        .kv {
+            margin-top: 0.6rem;
+            padding: 0.7rem 0.8rem;
+            border-radius: 8px;
+            background: #f6f8fb;
+            border: 1px solid #dbe3ec;
+            color: #1d2f42;
+            line-height: 1.5;
+        }
+
+        .ssid-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .ssid-row select {
+            flex: 1;
+        }
+
+        .ssid-row .btn-secondary {
+            white-space: nowrap;
+            border: 1px solid #cfd6de;
+            flex-shrink: 0;
+        }
+
+        .icon-btn {
+            width: 44px;
+            min-width: 44px;
+            height: 44px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .icon {
+            width: 20px;
+            height: 20px;
+            display: block;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .status-panel {
+            margin-top: 0.8rem;
+            border-radius: 8px;
+            padding: 0.7rem 0.8rem;
+            background: #eef5ff;
+            border: 1px solid #c9defc;
+            color: #1c4f8f;
+            display: none;
+        }
+
+        @media (max-width: 480px) {
+            .card {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo-wrap">
+            <img src="{{ url_for('static', filename='images/tabox_logo.jpg') }}" alt="taBOX 標誌">
+        </div>
+
+        {% if page_state == "connected" %}
+        <h1>連線成功</h1>
+        <p class="hint">已成功連線到指定 Wi-Fi。</p>
+
+        <div class="kv">
+            已連線 SSID：<strong>{{ connected_ssid }}</strong>
+        </div>
+
+        <form method="post" action="{{ url_for('finish') }}" class="actions" style="margin-top:1rem;">
+            <button class="btn-primary" type="submit">確定</button>
+        </form>
+
+        {% elif page_state == "finished" %}
+        <h1>程式已結束</h1>
+        <p class="hint">可以關閉這個頁面。</p>
+
+        {% if message %}
+        <div class="message {{ message_type }}">{{ message }}</div>
+        {% endif %}
+
+        {% else %}
+        <h1>Wi-Fi 連線設定</h1>
+        <p class="hint">請選擇可用 SSID 並輸入密碼。</p>
+
+
+
+        <form method="post" action="{{ url_for('connect') }}">
+            <label for="ssid">SSID 清單</label>
+            <div class="ssid-row">
+                <select id="ssid" name="ssid" required>
+                    <option value="" disabled {% if not selected_ssid %}selected{% endif %}>請選擇 Wi-Fi</option>
+                    {% for ssid in ssids %}
+                    <option value="{{ ssid }}" {% if selected_ssid == ssid %}selected{% endif %}>{{ ssid }}</option>
+                    {% endfor %}
+                </select>
+                <button class="btn-secondary icon-btn" id="refresh-ssid-btn" type="submit" formaction="{{ url_for('refresh') }}" formmethod="post" formnovalidate aria-label="重新掃描 SSID" title="重新掃描 SSID">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                        <polyline points="21 3 21 9 15 9"></polyline>
+                    </svg>
+                </button>
+            </div>
+
+            <label for="password">SSID 密碼</label>
+            <input id="password" name="password" type="text" placeholder="請輸入 Wi-Fi 密碼" required>
+
+            <div class="actions">
+                <button class="btn-primary" id="connect-btn" type="submit">連線</button>
+            </div>
+
+            <div id="connecting-status" class="status-panel"></div>
+        </form>
+        <iframe name="background-connect-frame" title="background-connect-frame" style="display:none;"></iframe>
+
+        {% if scan_error %}
+        <div class="message error">{{ scan_error }}</div>
+        {% endif %}
+
+        {% if message %}
+        <div class="message {{ message_type }}">{{ message }}</div>
+        {% endif %}
+
+        <script>
+            (function () {
+                const form = document.querySelector('form[action="{{ url_for("connect") }}"]');
+                if (!form) {
+                    return;
+                }
+
+                const completeUrl = "https://taBOX.onrender.com";
+
+                function escapeHtml(raw) {
+                    return String(raw)
+                        .replaceAll("&", "&amp;")
+                        .replaceAll("<", "&lt;")
+                        .replaceAll(">", "&gt;")
+                        .replaceAll('"', "&quot;")
+                        .replaceAll("'", "&#39;");
+                }
+
+                form.addEventListener("submit", function (event) {
+                    const submitter = event.submitter;
+                    if (submitter && submitter.id === "refresh-ssid-btn") {
+                        return;
+                    }
+
+                    const ssidSelect = document.getElementById("ssid");
+                    const passwordInput = document.getElementById("password");
+                    const connectingStatus = document.getElementById("connecting-status");
+                    if (!ssidSelect || !passwordInput || !connectingStatus) {
+                        return;
+                    }
+
+                    const selectedText = ssidSelect.options[ssidSelect.selectedIndex]?.text || ssidSelect.value;
+                    const passwordText = passwordInput.value || "(空白)";
+                    const confirmText =
+                        "警告：開始連線後，taBOX-Setup AP 會中斷。\n" +
+                        "請確認 SSID 與密碼正確。\n\n" +
+                        "SSID：" + selectedText + "\n" +
+                        "密碼：" + passwordText + "\n\n" +
+                        "是否開始連線？";
+
+                    if (!window.confirm(confirmText)) {
+                        event.preventDefault();
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    connectingStatus.innerHTML =
+                        "已經設定 taBOX 連線到：<br>" +
+                        "SSID：<strong>" + escapeHtml(selectedText) + "</strong><br>" +
+                        "密碼：<strong>" + escapeHtml(passwordText) + "</strong><br>" +
+                        "連線設定完成。<br>" +
+                        "請點：<a href=\"" + completeUrl + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + completeUrl + "</a><br>" +
+                        "檢查是否機器已經連線，<br>並且將此機器綁定到您的賬號！<br>設定 WiFi 完成。";
+                    connectingStatus.style.display = "block";
+                    connectingStatus.style.background = "#fff5e8";
+                    connectingStatus.style.borderColor = "#f0d3ad";
+                    connectingStatus.style.color = "#8a5b1a";
+                    connectingStatus.style.textAlign = "center";
+
+                    const submitButton = document.getElementById("connect-btn");
+                    if (submitButton) {
+                        submitButton.disabled = true;
+                    }
+
+                    // Submit in background so current page keeps showing the completion message.
+                    form.setAttribute("target", "background-connect-frame");
+
+                    setTimeout(function () {
+                        form.submit();
+                    }, 400);
+                });
+            })();
+        </script>
+        {% endif %}
+    </div>
+
+    <footer class="page-footer">
+        powered by <span class="brand">RenewTech</span> @2026.<br>
+        All rights reserved.
+    </footer>
+</body>
+</html>

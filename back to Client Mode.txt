@@ -1,0 +1,15 @@
+sudo systemctl stop hostapd
+sudo systemctl stop dnsmasq
+
+sudo systemctl disable hostapd
+sudo systemctl disable dnsmasq
+
+
+sudo rm /etc/NetworkManager/system-connections/*
+
+nmcli dev wifi list
+
+sudo ip link set wlan0 down
+sudo iw dev wlan0 set type managed
+sudo ip link set wlan0 up
+nmcli dev wifi connect "RubyJiro" password "0918911190"
