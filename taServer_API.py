@@ -26,6 +26,7 @@ def _read_mac_address(interface: str) -> str:
 
 
 def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
+    # login or heartbeat 
     interface = os.getenv("WIFI_INTERFACE", "wlan0")
     mac_address = _read_mac_address(interface)
     api_url = f"{taServer_URL}/{typestr}/{mac_token}:{mac_address}"
