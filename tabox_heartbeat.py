@@ -52,7 +52,7 @@ def run_heartbeat_forever() -> None:
     while True:
         ok, message = taServer_API_mac_heartbeat('none')
         status = "ok" if ok else "failed"
-        log_heartbeat_line(f"mac_login {status}: {message}")
+        log_heartbeat_line(f"{message}")
         time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
