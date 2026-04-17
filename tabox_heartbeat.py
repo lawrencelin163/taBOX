@@ -5,11 +5,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from taServer_API import taServer_API_mac_login
+from taServer_API import taServer_API_mac_heartbeat
 
 BOOTSTRAP_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "bootstrap.log"
 HEARTBEAT_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "hearbeat.log"
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "600"))
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "10"))
 
 
 def _append_log(file_path: Path, message: str, keep_lines: int) -> None:
@@ -50,7 +50,7 @@ def run_heartbeat_forever() -> None:
     log_heartbeat_line(startup_msg)
     log_bootstrap_start_once(startup_msg)
     while True:
-        ok, message = taServer_API_mac_login('heartbeat')
+        ok, message = taServer_API_mac_heartbeat('none')
         status = "ok" if ok else "failed"
         log_heartbeat_line(f"mac_login {status}: {message}")
         time.sleep(HEARTBEAT_INTERVAL_SEC)
