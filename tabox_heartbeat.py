@@ -9,7 +9,7 @@ from taServer_API import taServer_API_mac_heartbeat
 
 BOOTSTRAP_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "bootstrap.log"
 HEARTBEAT_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "hearbeat.log"
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "10"))
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "600"))
 
 
 def _append_log(file_path: Path, message: str, keep_lines: int) -> None:

@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=kl
-WorkingDirectory=/home/kl/openclaw
-ExecStart=/home/kl/.nvm/versions/node/v22.22.2/bin/openclaw gateway
+User=yf
+WorkingDirectory=/home/yf/.openclaw
+ExecStart=/usr/local/bin/openclaw gateway
 Restart=always
 RestartSec=3
 

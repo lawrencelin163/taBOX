@@ -1,5 +1,5 @@
 [Unit]
-Description=taBOX Wi-Fi Provisioning Portal
+Description=taBOX Init
 # Wait until NetworkManager is up before running; wifi hardware must be ready.
 After=NetworkManager.service NetworkManager-wait-online.service
 Wants=NetworkManager.service
@@ -9,12 +9,12 @@ OnSuccess=tabox-heartbeat.service
 Type=simple
 # Run as root so nmcli can create/remove network connections without polkit.
 User=root
-WorkingDirectory=/home/kl/GitPS/taBOX
+WorkingDirectory=/home/yf/GitPS/taBOX
 Environment=WIFI_INTERFACE=wlan0
 Environment=AP_SSID=taBOX-Setup
 Environment=AP_PASSWORD=12345678
 Environment=AP_IPV4_CIDR=10.42.0.1/24
-ExecStart=/home/kl/GitPS/taBOX/scripts/start_provisioning.sh
+ExecStart=/home/yf/GitPS/taBOX/scripts/start_init.sh
 # Do NOT restart when the program exits 0 (= auto-connect succeeded).
 # Only restart if the process crashes unexpectedly (non-zero exit).
 Restart=on-failure
