@@ -9,7 +9,7 @@ User=yf
 WorkingDirectory=/home/yf/GitPS/taBOX
 Environment=WIFI_INTERFACE=wlan0
 Environment=HEARTBEAT_INTERVAL_SEC=600
-ExecStart=/home/yf/GitPS/taBOX/env/bin/python /home/yf/GitPS/taBOX/tabox_heartbeat.py
+ExecStart=/home/yf/GitPS/taBOX/.venv/bin/python /home/yf/GitPS/taBOX/tabox_heartbeat.py
 Restart=always
 RestartSec=5
 
