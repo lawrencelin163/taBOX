@@ -6,14 +6,21 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-# taServer base URL and fixed mac token for registration/login.
-taServer_URL = "https://tabox.onrender.com/api/mac"
-mac_token = "aa04-eaaf-d961-4f40" # yf 的 token
-mac_token = "o3h3-4l81-i9i9-1r0z" # kl 的 token
-kl_url= "https://tabox.onrender.com/api/mac/heartbeat/o3h3-4l81-i9i9-1r0z:88a29e867036:none"
+from tabox_config import load_config
+
+
+CONFIG = load_config()
+WIFI_INTERFACE = CONFIG["wifi"]["interface"]
+TA_SERVER_CONFIG = CONFIG["ta_server"]
+TA_SERVER_URL = TA_SERVER_CONFIG["base_url"].rstrip("/")
+MAC_TOKEN = TA_SERVER_CONFIG["mac_token"]
+REQUEST_TIMEOUT = int(TA_SERVER_CONFIG["requests_timeout_seconds"])
+MAC_ADDRESS_OVERRIDE = TA_SERVER_CONFIG.get("mac_address")
 
 def _read_mac_address(interface: str) -> str:
-    return '88a29e867036'
+    if MAC_ADDRESS_OVERRIDE:
+        return str(MAC_ADDRESS_OVERRIDE).replace(":", "").lower()
+
     addr_path = f"/sys/class/net/{interface}/address"
     try:
         with open(addr_path, "r", encoding="utf-8") as f:
@@ -28,14 +35,13 @@ def _read_mac_address(interface: str) -> str:
 
 def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
     # login or heartbeat 
-    interface = os.getenv("WIFI_INTERFACE", "wlan0")
-    mac_address = _read_mac_address(interface)
-    api_url = f"{taServer_URL}/{typestr}/{mac_token}:{mac_address}"
+    mac_address = _read_mac_address(WIFI_INTERFACE)
+    api_url = f"{TA_SERVER_URL}/{typestr}/{MAC_TOKEN}:{mac_address}"
     url_info = f"taServer API URL: {api_url}"
 
     req = urllib.request.Request(api_url, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             status_code = resp.getcode()
             body = resp.read().decode("utf-8", errors="replace")
             mac_id = None
@@ -64,15 +70,14 @@ def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
 
 def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
     # login or heartbeat 
-    interface = os.getenv("WIFI_INTERFACE", "wlan0")
-    mac_address = _read_mac_address(interface)
-    api_url = f"{taServer_URL}/heartbeat/{mac_token}:{mac_address}:{replystr}"
+    mac_address = _read_mac_address(WIFI_INTERFACE)
+    api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{mac_address}:{replystr}"
     url_info = f"taServer API URL: {api_url}"
     #print(f"[debug] {url_info}")
 
     req = urllib.request.Request(api_url, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             status_code = resp.getcode()
             body = resp.read().decode("utf-8", errors="replace")
             mac_id = None
@@ -112,7 +117,7 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
 
                         utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
                         replystr = f"{utc_time}"
-                        api_url = f"{taServer_URL}/heartbeat/{mac_token}:{mac_address}:{replystr}"
+                        api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{mac_address}:{replystr}"
                         url_info = f'reply to server: "{api_url}"'
                         req = urllib.request.Request(api_url, method="GET")
                         if os_exec_str == 'SELF':
@@ -121,7 +126,7 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
                             print("Execute command: ", os_exec_str)
                             
                         print(url_info)
-                        with urllib.request.urlopen(req, timeout=8) as resp:
+                        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
                             status_code = resp.getcode()
                             body = resp.read().decode("utf-8", errors="replace")
                             print(f"Reply to server: HTTP {status_code} body={body[:180]}")

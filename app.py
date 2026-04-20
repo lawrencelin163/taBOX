@@ -9,14 +9,30 @@ from pathlib import Path
 
 from flask import Flask, redirect, render_template, request, url_for
 
+from tabox_config import load_config, resolve_project_path, save_config
 from taServer_API import taServer_API_mac_login
 
 app = Flask(__name__)
 
-WIFI_INTERFACE = os.getenv("WIFI_INTERFACE", "wlan0")
-SSID_STORE_FILE = Path(__file__).resolve().parent / "ssid_code_list.txt"
-AP_MODE_SCRIPT = Path(__file__).resolve().parent / "scripts" / "enter_ap_mode.sh"
-BOOTSTRAP_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "bootstrap.log"
+CONFIG = load_config()
+WIFI_CONFIG = CONFIG["wifi"]
+AP_MODE_CONFIG = CONFIG["ap_mode"]
+BOOTSTRAP_CONFIG = CONFIG["bootstrap"]
+FLASK_CONFIG = CONFIG["flask"]
+
+WIFI_INTERFACE = WIFI_CONFIG["interface"]
+WIFI_SHORT_TIMEOUT = int(WIFI_CONFIG["short_timeout_seconds"])
+WIFI_CONNECT_TIMEOUT = int(WIFI_CONFIG["connect_timeout_seconds"])
+WIFI_NMCLI_WAIT = int(WIFI_CONFIG["nmcli_wait_seconds"])
+WIFI_AUTOCONNECT_PRIORITY = int(WIFI_CONFIG["autoconnect_priority"])
+AP_MODE_SCRIPT = resolve_project_path(AP_MODE_CONFIG["script"])
+AP_CONNECTION_NAME = AP_MODE_CONFIG["connection_name"]
+AP_MODE_START_TIMEOUT = int(AP_MODE_CONFIG["start_timeout_seconds"])
+BOOTSTRAP_LOG_FILE = resolve_project_path(BOOTSTRAP_CONFIG["log_file"])
+BOOTSTRAP_LOG_KEEP_LINES = int(BOOTSTRAP_CONFIG["log_keep_lines"])
+LOGIN_DELAY_SECONDS = float(BOOTSTRAP_CONFIG["connect_login_delay_seconds"])
+EXIT_DELAY_SECONDS = float(BOOTSTRAP_CONFIG["exit_delay_seconds"])
+FLASK_PORT = int(FLASK_CONFIG["port"])
 
 # Auto-try saved SSIDs should run only once at the beginning of a provisioning cycle.
 BOOTSTRAP_ATTEMPTED = False
@@ -36,7 +52,7 @@ def run_cmd(command: list[str], timeout: int = 20, extra_env: dict[str, str] | N
 
 
 def get_interface_ipv4(interface: str) -> str | None:
-    code, out, _ = run_cmd(["nmcli", "-g", "IP4.ADDRESS", "device", "show", interface], timeout=8)
+    code, out, _ = run_cmd(["nmcli", "-g", "IP4.ADDRESS", "device", "show", interface], timeout=WIFI_SHORT_TIMEOUT)
     if code != 0 or not out:
         return None
 
@@ -47,14 +63,16 @@ def get_interface_ipv4(interface: str) -> str | None:
 
 
 def get_interface_connection_name(interface: str) -> str | None:
-    code, out, _ = run_cmd(["nmcli", "-g", "GENERAL.CONNECTION", "device", "show", interface], timeout=8)
+    code, out, _ = run_cmd(["nmcli", "-g", "GENERAL.CONNECTION", "device", "show", interface], timeout=WIFI_SHORT_TIMEOUT)
     if code != 0 or not out:
         return None
     name = out.splitlines()[0].strip()
     return name or None
 
 
-def wait_for_ap_ipv4(interface: str, expected_connection: str = "taBOX-AP", timeout_sec: int = 20) -> str | None:
+def wait_for_ap_ipv4(interface: str, expected_connection: str | None = None, timeout_sec: int | None = None) -> str | None:
+    expected_connection = expected_connection or AP_CONNECTION_NAME
+    timeout_sec = timeout_sec or int(AP_MODE_CONFIG["wait_timeout_seconds"])
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         conn_name = get_interface_connection_name(interface)
@@ -66,7 +84,7 @@ def wait_for_ap_ipv4(interface: str, expected_connection: str = "taBOX-AP", time
 
 
 def get_interface_general_state(interface: str) -> str:
-    code, out, err = run_cmd(["nmcli", "-g", "GENERAL.STATE", "device", "show", interface], timeout=8)
+    code, out, err = run_cmd(["nmcli", "-g", "GENERAL.STATE", "device", "show", interface], timeout=WIFI_SHORT_TIMEOUT)
     if code != 0:
         return f"unknown({err or out or 'nmcli error'})"
     return out.splitlines()[0].strip() if out else "unknown(empty)"
@@ -101,23 +119,23 @@ def connect_wifi(ssid: str, password: str, connection_name: str | None = None) -
         return False, "SSID 不能為空"
 
     # Stop hotspot/AP profile if it exists, then connect as a station/client.
-    run_cmd(["nmcli", "connection", "down", "taBOX-AP"], timeout=8)
-    run_cmd(["nmcli", "device", "disconnect", WIFI_INTERFACE], timeout=8)
+    run_cmd(["nmcli", "connection", "down", AP_CONNECTION_NAME], timeout=WIFI_SHORT_TIMEOUT)
+    run_cmd(["nmcli", "device", "disconnect", WIFI_INTERFACE], timeout=WIFI_SHORT_TIMEOUT)
 
     if connection_name:
         # Ensure retries always use the provided credentials instead of an old profile secret.
-        run_cmd(["nmcli", "connection", "delete", connection_name], timeout=8)
+        run_cmd(["nmcli", "connection", "delete", connection_name], timeout=WIFI_SHORT_TIMEOUT)
     else:
         # Remove stale SSID profile so a previous wrong password does not poison the next attempt.
-        run_cmd(["nmcli", "connection", "delete", ssid], timeout=8)
+        run_cmd(["nmcli", "connection", "delete", ssid], timeout=WIFI_SHORT_TIMEOUT)
 
-    connect_cmd = ["nmcli", "--wait", "15", "device", "wifi", "connect", ssid, "ifname", WIFI_INTERFACE]
+    connect_cmd = ["nmcli", "--wait", str(WIFI_NMCLI_WAIT), "device", "wifi", "connect", ssid, "ifname", WIFI_INTERFACE]
     if password:
         connect_cmd.extend(["password", password])
     if connection_name:
         connect_cmd.extend(["name", connection_name])
 
-    code, out, err = run_cmd(connect_cmd, timeout=20)
+    code, out, err = run_cmd(connect_cmd, timeout=WIFI_CONNECT_TIMEOUT)
     if code != 0:
         details = f"{err}\n{out}".strip()
         if code == 124:
@@ -128,7 +146,7 @@ def connect_wifi(ssid: str, password: str, connection_name: str | None = None) -
 
     verify_code, verify_out, verify_err = run_cmd(
         ["nmcli", "-t", "-f", "GENERAL.STATE", "device", "show", WIFI_INTERFACE],
-        timeout=8,
+        timeout=WIFI_SHORT_TIMEOUT,
     )
     if verify_code != 0:
         return False, f"連線狀態檢查失敗: {verify_err or verify_out}"
@@ -142,19 +160,21 @@ def connect_wifi(ssid: str, password: str, connection_name: str | None = None) -
 
     if connection_name:
         # Temporary auto-try profiles should never become future default autoconnect targets.
-        run_cmd(["nmcli", "connection", "modify", connection_name, "connection.autoconnect", "no"], timeout=8)
-        run_cmd(["nmcli", "connection", "modify", "taBOX-AP", "connection.autoconnect", "no"], timeout=8)
+        run_cmd(["nmcli", "connection", "modify", connection_name, "connection.autoconnect", "no"], timeout=WIFI_SHORT_TIMEOUT)
+        run_cmd(["nmcli", "connection", "modify", AP_CONNECTION_NAME, "connection.autoconnect", "no"], timeout=WIFI_SHORT_TIMEOUT)
         return True, "連線成功"
 
     # Keep normal behavior after successful provisioning: prefer selected client SSID.
-    run_cmd(["nmcli", "connection", "modify", ssid, "connection.autoconnect", "yes"], timeout=8)
-    run_cmd(["nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", "100"], timeout=8)
-    run_cmd(["nmcli", "connection", "modify", "taBOX-AP", "connection.autoconnect", "no"], timeout=8)
+    run_cmd(["nmcli", "connection", "modify", ssid, "connection.autoconnect", "yes"], timeout=WIFI_SHORT_TIMEOUT)
+    run_cmd(["nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(WIFI_AUTOCONNECT_PRIORITY)], timeout=WIFI_SHORT_TIMEOUT)
+    run_cmd(["nmcli", "connection", "modify", AP_CONNECTION_NAME, "connection.autoconnect", "no"], timeout=WIFI_SHORT_TIMEOUT)
 
     return True, "連線成功"
 
 
-def schedule_exit_zero(delay_sec: float = 1.0) -> None:
+def schedule_exit_zero(delay_sec: float | None = None) -> None:
+    delay_sec = EXIT_DELAY_SECONDS if delay_sec is None else delay_sec
+
     def _exit_ok() -> None:
         os._exit(0)
 
@@ -162,36 +182,35 @@ def schedule_exit_zero(delay_sec: float = 1.0) -> None:
     threading.Timer(delay_sec, _exit_ok).start()
 
 
+def _normalize_saved_networks(raw_networks: object) -> list[dict[str, str]]:
+    if not isinstance(raw_networks, list):
+        return []
+
+    networks: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_networks:
+        if not isinstance(item, dict):
+            continue
+        ssid = str(item.get("ssid_id", "")).strip()
+        password = str(item.get("password", "")).strip()
+        if not ssid or ssid in seen:
+            continue
+        seen.add(ssid)
+        networks.append({"ssid_id": ssid, "password": password})
+    return networks
+
+
 def save_wifi_credentials(ssid: str, password: str) -> None:
-    SSID_STORE_FILE.touch(exist_ok=True)
-    os.chmod(SSID_STORE_FILE, 0o600)
-    with SSID_STORE_FILE.open("a", encoding="utf-8") as f:
-        f.write(f"{ssid}\t{password}\n")
+    saved_networks = _normalize_saved_networks(WIFI_CONFIG.get("saved_networks", []))
+    updated_networks = [entry for entry in saved_networks if entry["ssid_id"] != ssid]
+    updated_networks.append({"ssid_id": ssid, "password": password})
+    WIFI_CONFIG["saved_networks"] = updated_networks
+    save_config(CONFIG)
 
 
 def load_wifi_credentials() -> list[tuple[str, str]]:
-    if not SSID_STORE_FILE.exists():
-        return []
-
-    credentials: list[tuple[str, str]] = []
-    seen: set[str] = set()
-
-    with SSID_STORE_FILE.open("r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            parts = line.split("\t", 1)
-            ssid = parts[0].strip()
-            password = parts[1].strip() if len(parts) == 2 else ""
-            if not ssid or ssid in seen:
-                continue
-
-            seen.add(ssid)
-            credentials.append((ssid, password))
-
-    return credentials
+    saved_networks = _normalize_saved_networks(WIFI_CONFIG.get("saved_networks", []))
+    return [(entry["ssid_id"], entry["password"]) for entry in saved_networks]
 
 
 def try_saved_ssids() -> tuple[bool, str | None, str | None]:
@@ -225,12 +244,12 @@ def start_ap_mode() -> tuple[bool, str]:
 
     code, out, err = run_cmd(
         ["bash", str(AP_MODE_SCRIPT)],
-        timeout=35,
+        timeout=AP_MODE_START_TIMEOUT,
         extra_env={
             "WIFI_INTERFACE": WIFI_INTERFACE,
-            "AP_SSID": os.getenv("AP_SSID", "taBOX-Setup"),
-            "AP_PASSWORD": os.getenv("AP_PASSWORD", "12345678"),
-            "AP_IPV4_CIDR": os.getenv("AP_IPV4_CIDR", "10.42.0.1/24"),
+            "AP_SSID": AP_MODE_CONFIG["ssid"],
+            "AP_PASSWORD": AP_MODE_CONFIG["password"],
+            "AP_IPV4_CIDR": AP_MODE_CONFIG["ipv4_cidr"],
         },
     )
     if code == 0:
@@ -249,7 +268,7 @@ def log_bootstrap(message: str) -> None:
             with BOOTSTRAP_LOG_FILE.open("r", encoding="utf-8") as f:
                 lines = [raw.rstrip("\n") for raw in f.readlines()]
         lines.append(line)
-        lines = lines[-500:]
+        lines = lines[-BOOTSTRAP_LOG_KEEP_LINES:]
         with BOOTSTRAP_LOG_FILE.open("w", encoding="utf-8") as f:
             f.write("\n".join(lines))
             if lines:
@@ -274,9 +293,9 @@ def finalize_connected_and_login(ssid: str, source: str) -> None:
     ip = get_interface_ipv4(WIFI_INTERFACE) or "none"
     log_bootstrap(
         f"[finalize] source={source} ssid={ssid} state={state} ip={ip} "
-        "next=wait 3s then taServer login"
+        f"next=wait {LOGIN_DELAY_SECONDS:g}s then taServer login"
     )
-    time.sleep(10)
+    time.sleep(LOGIN_DELAY_SECONDS)
     api_ok, api_msg = taServer_API_mac_login('login')
     log_bootstrap(f"[taServer] {api_msg}")
 
@@ -303,7 +322,7 @@ def bootstrap_network_on_start() -> bool:
         log_bootstrap("[bootstrap] fallback to AP mode enabled")
         ap_ip = wait_for_ap_ipv4(WIFI_INTERFACE)
         if ap_ip:
-            log_bootstrap(f"[bootstrap] AP portal URL: http://{ap_ip}:5000")
+            log_bootstrap(f"[bootstrap] AP portal URL: http://{ap_ip}:{FLASK_PORT}")
         else:
             log_bootstrap(
                 "[bootstrap] AP IP not ready yet. Run: nmcli -f GENERAL.CONNECTION,IP4.ADDRESS device show "
@@ -378,7 +397,7 @@ def connect():
 
     log_connect_diagnostics("failed", ssid, connect_started, message)
     # One-shot provisioning flow: do not switch back to AP for retries in this mode.
-    schedule_exit_zero(1.2)
+    schedule_exit_zero()
 
     return render_template(
         "index.html",
@@ -386,6 +405,8 @@ def connect():
         message="連線流程已執行，程式即將結束。",
         message_type="success" if success else "error",
     )
+
+
 @app.route("/finish", methods=["POST"])
 def finish():
     shutdown_func = request.environ.get("werkzeug.server.shutdown")
@@ -393,7 +414,7 @@ def finish():
         shutdown_func()
     else:
         # Give the browser a short time window to receive the response first.
-        threading.Timer(1.0, lambda: os._exit(0)).start()
+        threading.Timer(EXIT_DELAY_SECONDS, lambda: os._exit(0)).start()
 
     return render_template(
         "index.html",
@@ -457,4 +478,4 @@ if __name__ == "__main__":
     if not should_start_portal:
         log_bootstrap("[bootstrap] provisioning portal skipped (auto-connect already successful)")
         raise SystemExit(0)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host=FLASK_CONFIG["host"], port=FLASK_PORT, debug=bool(FLASK_CONFIG["debug"]))

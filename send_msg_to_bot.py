@@ -2,15 +2,21 @@
 Telegram Bot 消息发送模块
 """
 
-import os
-import requests
 from typing import Optional
+
+import requests
+
+from tabox_config import load_config
+
+
+CONFIG = load_config()
+TELEGRAM_CONFIG = CONFIG["telegram"]
 
 
 class TelegramBot:
     """Telegram Bot 消息发送类"""
     
-    def __init__(self, bot_token: str):
+    def __init__(self, bot_token: str, api_base_url: Optional[str] = None, request_timeout_seconds: Optional[int] = None):
         """
         初始化 Telegram Bot
         
@@ -18,7 +24,9 @@ class TelegramBot:
             bot_token: Bot Token（从 @BotFather 获得）
         """
         self.bot_token = bot_token
-        self.api_url = f"https://api.telegram.org/bot{bot_token}"
+        self.request_timeout_seconds = request_timeout_seconds or int(TELEGRAM_CONFIG["requests_timeout_seconds"])
+        base_url = (api_base_url or TELEGRAM_CONFIG["base_url"]).rstrip("/")
+        self.api_url = f"{base_url}/bot{bot_token}"
     
     def send_message(self, chat_id: str, message: str) -> dict:
         """
@@ -39,7 +47,7 @@ class TelegramBot:
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=self.request_timeout_seconds)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -64,7 +72,7 @@ class TelegramBot:
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=self.request_timeout_seconds)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -74,7 +82,7 @@ class TelegramBot:
         """获取 Bot 信息"""
         url = f"{self.api_url}/getMe"
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=self.request_timeout_seconds)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -93,13 +101,15 @@ def send_telegram_message(message: str, bot_token: Optional[str] = None, chat_id
     Returns:
         API 响应字典
     """
-    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    bot_list = TELEGRAM_CONFIG.get("bot_list", [])
+    first_bot = bot_list[0] if isinstance(bot_list, list) and bot_list else {}
+    bot_token = bot_token or str(first_bot.get("bot_token", ""))
+    chat_id = chat_id or str(first_bot.get("chat_id", ""))
     
     if not bot_token or not chat_id:
         return {
             "ok": False,
-            "error": "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID"
+            "error": "Missing telegram.bot_list[0].bot_token or telegram.bot_list[0].chat_id in taBOX.json"
         }
     
     bot = TelegramBot(bot_token)
@@ -108,14 +118,17 @@ def send_telegram_message(message: str, bot_token: Optional[str] = None, chat_id
 
 # 使用示例
 if __name__ == "__main__":
-    # 方式1：使用环境变量
-    # 需要设置: TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID
-    bot_data  = [['Lawrence', '8346872200:AAHkzYwxPLjtTHv4gWkKZ4O_TXWDQeMleBE', '6426368377'],
-                 ['Odatee',   '8660446164:AAGNnsYm5N2U6s0ToBsNtESsj_sCa6yjonY', '8627815136']]
-    bot_i = bot_data[0]
+    bot_list = TELEGRAM_CONFIG.get("bot_list", [])
+    if not isinstance(bot_list, list) or not bot_list:
+        raise SystemExit("No telegram.bot_list configured in taBOX.json")
 
-    print(f"使用 Bot 編號: {bot_data.index(bot_i)} (名稱: {bot_i[0]})")
-    result = send_telegram_message("早上好！From taBOX Server! 🎉", bot_token=bot_i[1], chat_id=bot_i[2])
+    bot_i = bot_list[0]
+    print(f"使用 Bot: {bot_i.get('name', 'unknown')}")
+    result = send_telegram_message(
+        "早上好！From taBOX Server! 🎉",
+        bot_token=bot_i["bot_token"],
+        chat_id=bot_i["chat_id"],
+    )
     print("结果:", result)
     
     # 方式2：直接传入参数

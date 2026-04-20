@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-import os
 import time
 from datetime import datetime
-from pathlib import Path
 
+from tabox_config import load_config, resolve_project_path
 from taServer_API import taServer_API_mac_heartbeat
 
-BOOTSTRAP_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "bootstrap.log"
-HEARTBEAT_LOG_FILE = Path(__file__).resolve().parent / "Temp" / "hearbeat.log"
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "600"))
+CONFIG = load_config()
+BOOTSTRAP_CONFIG = CONFIG["bootstrap"]
+HEARTBEAT_CONFIG = CONFIG["heartbeat"]
+TA_SERVER_CONFIG = CONFIG["ta_server"]
+
+BOOTSTRAP_LOG_FILE = resolve_project_path(BOOTSTRAP_CONFIG["log_file"])
+BOOTSTRAP_LOG_KEEP_LINES = int(BOOTSTRAP_CONFIG["log_keep_lines"])
+HEARTBEAT_LOG_FILE = resolve_project_path(HEARTBEAT_CONFIG["log_file"])
+HEARTBEAT_LOG_KEEP_LINES = int(HEARTBEAT_CONFIG["log_keep_lines"])
+HEARTBEAT_INTERVAL_SEC = int(HEARTBEAT_CONFIG["interval_seconds"])
+HEARTBEAT_REPLY_DEFAULT = TA_SERVER_CONFIG["heartbeat_reply"]
 
 
-def _append_log(file_path: Path, message: str, keep_lines: int) -> None:
+def _append_log(file_path, message: str, keep_lines: int) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     if file_path.exists():
@@ -31,7 +38,7 @@ def log_heartbeat_line(message: str) -> None:
     line = f"[{timestamp}] [heartbeat] {message}"
     print(line, flush=True)
     try:
-        _append_log(HEARTBEAT_LOG_FILE, line, 1500)
+        _append_log(HEARTBEAT_LOG_FILE, line, HEARTBEAT_LOG_KEEP_LINES)
     except OSError:
         pass
 
@@ -40,7 +47,7 @@ def log_bootstrap_start_once(message: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] [heartbeat] {message}"
     try:
-        _append_log(BOOTSTRAP_LOG_FILE, line, 500)
+        _append_log(BOOTSTRAP_LOG_FILE, line, BOOTSTRAP_LOG_KEEP_LINES)
     except OSError:
         pass
 
@@ -50,7 +57,7 @@ def run_heartbeat_forever() -> None:
     log_heartbeat_line(startup_msg)
     log_bootstrap_start_once(startup_msg)
     while True:
-        ok, message = taServer_API_mac_heartbeat('none')
+        ok, message = taServer_API_mac_heartbeat(HEARTBEAT_REPLY_DEFAULT)
         status = "ok" if ok else "failed"
         log_heartbeat_line(f"{message}")
         time.sleep(HEARTBEAT_INTERVAL_SEC)
