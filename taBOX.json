@@ -52,22 +52,30 @@
     "requests_timeout_seconds": 10,
     "bot_list": [
       {
-        "name": "Lawrence(元芳)",
+        "bot_id":"BAAA0002",
+        "bot_username": "@DrLin2026_bot",
+        "bot_name":"元芳",
         "bot_token": "8346872200:AAHkzYwxPLjtTHv4gWkKZ4O_TXWDQeMleBE",
         "chat_id": "6426368377"
       },
       {
-        "name": "Lawrence(Lawrence_nb)",
+        "bot_id":"BAAA0005",
+        "bot_username": "@Lawrence_nb_bot",
+        "bot_name":"Lawrence_nb",
         "bot_token": "8786819256:AAE7c2n_NPlZ4GC1CG_Vc7aZ8XWfTRZuvpw",
         "chat_id": "6426368377"
       },
       {
-        "name": "Odette(嚕嚕米)",
+        "bot_id":"BAAA0003",
+        "bot_username": "@odette_helper_bot",
+        "bot_name":"嚕嚕米",
         "bot_token": "8660446164:AAGNnsYm5N2U6s0ToBsNtESsj_sCa6yjonY",
         "chat_id": "8627815136"
       },
       {
-        "name": "Odette(快龍)",
+        "bot_id":"BAAA0006",
+        "bot_username": "@Odette_kl_bot",
+        "bot_name":"快龍",
         "bot_token": "8779592026:AAF8rj_pBAVjE1KG3ChTVx7paWL6TRS2JUw",
         "chat_id": "8627815136"
       }
