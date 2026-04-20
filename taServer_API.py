@@ -8,12 +8,12 @@ from datetime import datetime, timezone
 
 # taServer base URL and fixed mac token for registration/login.
 taServer_URL = "https://tabox.onrender.com/api/mac"
-mac_token = "aa04-eaaf-d961-4f40" # yf 的 token
-mac_token = "o3h3-4l81-i9i9-1r0z" # kl 的 token
+mac_token = "aa04-eaaf-d961-4f40" # YF 的 token
+mac_token = "o3h3-4l81-i9i9-1r0z" # KL 的 token
 kl_url= "https://tabox.onrender.com/api/mac/heartbeat/o3h3-4l81-i9i9-1r0z:88a29e867036:none"
 
 def _read_mac_address(interface: str) -> str:
-    return '88a29e867036'
+    return '88a29e867036' # KL 的 MAC 位址 (測試用)
     addr_path = f"/sys/class/net/{interface}/address"
     try:
         with open(addr_path, "r", encoding="utf-8") as f:
