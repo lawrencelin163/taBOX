@@ -40,10 +40,9 @@
   },
   "ta_server": {
     "base_url": "https://tabox.onrender.com/api/mac",
-    "mac_id": "MR508002",
     "mac_token": "o3h3-4l81-i9i9-1r0z",
     "mac_address": "88a29e867036",
-    "mac_code": "h2-z7-9v-b6",
+    "mac_code": "a9-k7-2m-r4",
     "heartbeat_reply": "none",
     "requests_timeout_seconds": 8
   },

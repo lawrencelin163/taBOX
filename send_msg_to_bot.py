@@ -122,7 +122,7 @@ if __name__ == "__main__":
     if not isinstance(bot_list, list) or not bot_list:
         raise SystemExit("No telegram.bot_list configured in taBOX.json")
 
-    bot_i = bot_list[0]
+    bot_i = bot_list[2]
     print(f"使用 Bot: {bot_i.get('name', 'unknown')}")
     result = send_telegram_message(
         "早上好！From taBOX Server! 🎉",
