@@ -19,6 +19,7 @@ WIFI_CONFIG = CONFIG["wifi"]
 AP_MODE_CONFIG = CONFIG["ap_mode"]
 BOOTSTRAP_CONFIG = CONFIG["bootstrap"]
 FLASK_CONFIG = CONFIG["flask"]
+SAVED_NETWORKS = CONFIG
 
 WIFI_INTERFACE = WIFI_CONFIG["interface"]
 WIFI_SHORT_TIMEOUT = int(WIFI_CONFIG["short_timeout_seconds"])
@@ -201,15 +202,15 @@ def _normalize_saved_networks(raw_networks: object) -> list[dict[str, str]]:
 
 
 def save_wifi_credentials(ssid: str, password: str) -> None:
-    saved_networks = _normalize_saved_networks(WIFI_CONFIG.get("saved_networks", []))
+    saved_networks = _normalize_saved_networks(SAVED_NETWORKS.get("saved_networks", []))
     updated_networks = [entry for entry in saved_networks if entry["ssid_id"] != ssid]
     updated_networks.append({"ssid_id": ssid, "password": password})
-    WIFI_CONFIG["saved_networks"] = updated_networks
+    SAVED_NETWORKS["saved_networks"] = updated_networks
     save_config(CONFIG)
 
 
 def load_wifi_credentials() -> list[tuple[str, str]]:
-    saved_networks = _normalize_saved_networks(WIFI_CONFIG.get("saved_networks", []))
+    saved_networks = _normalize_saved_networks(SAVED_NETWORKS.get("saved_networks", []))
     return [(entry["ssid_id"], entry["password"]) for entry in saved_networks]
 
 

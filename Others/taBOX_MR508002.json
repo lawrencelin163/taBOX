@@ -8,22 +8,29 @@
   ],
   "ta_server": {
     "base_url": "https://tabox.onrender.com/api/mac",
-    "mac_name": "元芳2",
-    "mac_id": "MR402003",
-    "mac_host_name": "YF2",
-    "mac_token": "b3a5-3ams-bzqu-rg3h",
-    "mac_address": "88a29e39697f",
-    "mac_code": "ss-kz-3g-qm",
+    "mac_name": "快龍",
+    "mac_id": "MR508002",
+    "mac_host_name": "KL",
+    "mac_token": "o3h3-4l81-i9i9-1r0z",
+    "mac_address": "88a29e867036",
+    "mac_code": "h2-z7-9v-b6",
     "heartbeat_reply": "none",
     "requests_timeout_seconds": 8
   },
   "bot_list": [
     {
-      "bot_id": "BAAA0007",
-      "bot_username": "@taBOX101_bot",
-      "bot_name": "taBOX101",
-      "bot_token": "8675851679:AAFKQBrtAKGvGTv7l_gXr1UCPwlpd4vW8ME",
+      "bot_id": "BAAA0005",
+      "bot_username": "@Lawrence_nb_bot",
+      "bot_name": "Lawrence_nb",
+      "bot_token": "8786819256:AAE7c2n_NPlZ4GC1CG_Vc7aZ8XWfTRZuvpw",
       "chat_id": "6426368377"
+    },
+    {
+      "bot_id": "BAAA0006",
+      "bot_username": "@Odette_kl_bot",
+      "bot_name": "快龍",
+      "bot_token": "8779592026:AAF8rj_pBAVjE1KG3ChTVx7paWL6TRS2JUw",
+      "chat_id": "8627815136"
     }
   ],
   "wifi": {

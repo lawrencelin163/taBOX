@@ -15,28 +15,11 @@ TA_SERVER_CONFIG = CONFIG["ta_server"]
 TA_SERVER_URL = TA_SERVER_CONFIG["base_url"].rstrip("/")
 MAC_TOKEN = TA_SERVER_CONFIG["mac_token"]
 REQUEST_TIMEOUT = int(TA_SERVER_CONFIG["requests_timeout_seconds"])
-MAC_ADDRESS_OVERRIDE = TA_SERVER_CONFIG.get("mac_address")
-
-def _read_mac_address(interface: str) -> str:
-    if MAC_ADDRESS_OVERRIDE:
-        return str(MAC_ADDRESS_OVERRIDE).replace(":", "").lower()
-
-    addr_path = f"/sys/class/net/{interface}/address"
-    try:
-        with open(addr_path, "r", encoding="utf-8") as f:
-            mac_raw = f.read().strip().lower()
-    except OSError as exc:
-        raise RuntimeError(f"無法讀取 {interface} MAC 位址: {exc}") from exc
-
-    mac_clean = mac_raw.replace(":", "")
-    if len(mac_clean) != 12 or any(ch not in "0123456789abcdef" for ch in mac_clean):
-        raise RuntimeError(f"MAC 位址格式異常: {mac_raw}")
-    return mac_clean
+MAC_ADDRESS = TA_SERVER_CONFIG.get("mac_address")
 
 def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
     # login or heartbeat 
-    mac_address = _read_mac_address(WIFI_INTERFACE)
-    api_url = f"{TA_SERVER_URL}/{typestr}/{MAC_TOKEN}:{mac_address}"
+    api_url = f"{TA_SERVER_URL}/{typestr}/{MAC_TOKEN}:{MAC_ADDRESS}"
     url_info = f"taServer API URL: {api_url}"
 
     req = urllib.request.Request(api_url, method="GET")
@@ -70,8 +53,7 @@ def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
 
 def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
     # login or heartbeat 
-    mac_address = _read_mac_address(WIFI_INTERFACE)
-    api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{mac_address}:{replystr}"
+    api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
     url_info = f"taServer API URL: {api_url}"
     #print(f"[debug] {url_info}")
 
@@ -117,7 +99,7 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
 
                         utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
                         replystr = f"{utc_time}"
-                        api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{mac_address}:{replystr}"
+                        api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
                         url_info = f'reply to server: "{api_url}"'
                         req = urllib.request.Request(api_url, method="GET")
                         if os_exec_str == 'SELF':

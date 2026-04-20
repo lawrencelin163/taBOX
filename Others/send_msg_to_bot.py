@@ -11,6 +11,7 @@ from tabox_config import load_config
 
 CONFIG = load_config()
 TELEGRAM_CONFIG = CONFIG["telegram"]
+BOT_LIST = CONFIG.get("bot_list", [])
 
 
 class TelegramBot:
@@ -101,15 +102,14 @@ def send_telegram_message(message: str, bot_token: Optional[str] = None, chat_id
     Returns:
         API 响应字典
     """
-    bot_list = TELEGRAM_CONFIG.get("bot_list", [])
-    first_bot = bot_list[0] if isinstance(bot_list, list) and bot_list else {}
+    first_bot = BOT_LIST[0] if isinstance(BOT_LIST, list) and BOT_LIST else {}
     bot_token = bot_token or str(first_bot.get("bot_token", ""))
     chat_id = chat_id or str(first_bot.get("chat_id", ""))
-    
+
     if not bot_token or not chat_id:
         return {
             "ok": False,
-            "error": "Missing telegram.bot_list[0].bot_token or telegram.bot_list[0].chat_id in taBOX.json"
+            "error": "Missing bot_list[0].bot_token or bot_list[0].chat_id in taBOX.json"
         }
     
     bot = TelegramBot(bot_token)
@@ -118,11 +118,10 @@ def send_telegram_message(message: str, bot_token: Optional[str] = None, chat_id
 
 # 使用示例
 if __name__ == "__main__":
-    bot_list = TELEGRAM_CONFIG.get("bot_list", [])
-    if not isinstance(bot_list, list) or not bot_list:
-        raise SystemExit("No telegram.bot_list configured in taBOX.json")
+    if not isinstance(BOT_LIST, list) or not BOT_LIST:
+        raise SystemExit("No bot_list configured in taBOX.json")
 
-    bot_i = bot_list[2]
+    bot_i = BOT_LIST[2]
     print(f"使用 Bot: {bot_i.get('name', 'unknown')}")
     result = send_telegram_message(
         "早上好！From taBOX Server! 🎉",
