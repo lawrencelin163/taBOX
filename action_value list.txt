@@ -1,0 +1,2 @@
+1. taServer_API(V 260420 2222).py
+https://b619f047e21b146f3d2379352db03365.r2.cloudflarestorage.com/taauth/taServer_API%28V%20260420%202222%29.py?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=089d123ae93016953943b48cbf197fb8%2F20260420%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20260420T143559Z&X-Amz-Expires=432000&X-Amz-SignedHeaders=host&X-Amz-Signature=85afa7bf522c7a5766b3254d1d44bac456d58a5e279c4c125d1457f8671b9f5a

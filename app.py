@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import Flask, redirect, render_template, request, url_for
 
@@ -32,8 +34,13 @@ AP_MODE_START_TIMEOUT = int(AP_MODE_CONFIG["start_timeout_seconds"])
 BOOTSTRAP_LOG_FILE = resolve_project_path(BOOTSTRAP_CONFIG["log_file"])
 BOOTSTRAP_LOG_KEEP_LINES = int(BOOTSTRAP_CONFIG["log_keep_lines"])
 LOGIN_DELAY_SECONDS = float(BOOTSTRAP_CONFIG["connect_login_delay_seconds"])
+LOGIN_MAX_ATTEMPTS = int(BOOTSTRAP_CONFIG.get("connect_login_max_attempts", 4))
+LOGIN_RETRY_INTERVAL_SECONDS = float(BOOTSTRAP_CONFIG.get("connect_login_retry_interval_seconds", 5))
+TA_SERVER_READY_TIMEOUT_SECONDS = float(BOOTSTRAP_CONFIG.get("ta_server_ready_timeout_seconds", 12))
+TA_SERVER_READY_PROBE_INTERVAL_SECONDS = float(BOOTSTRAP_CONFIG.get("ta_server_ready_probe_interval_seconds", 2))
 EXIT_DELAY_SECONDS = float(BOOTSTRAP_CONFIG["exit_delay_seconds"])
 FLASK_PORT = int(FLASK_CONFIG["port"])
+TA_SERVER_BASE_URL = str(CONFIG.get("ta_server", {}).get("base_url", "")).strip()
 
 # Auto-try saved SSIDs should run only once at the beginning of a provisioning cycle.
 BOOTSTRAP_ATTEMPTED = False
@@ -289,6 +296,49 @@ def log_connect_diagnostics(stage: str, ssid: str, start_monotonic: float, resul
     )
 
 
+def _resolve_ta_server_endpoint() -> tuple[str | None, int | None, str | None]:
+    parsed = urlparse(TA_SERVER_BASE_URL)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return None, None, "ta_server.base_url 未設定或格式錯誤"
+
+    if parsed.port:
+        return host, parsed.port, None
+
+    if parsed.scheme == "https":
+        return host, 443, None
+    if parsed.scheme == "http":
+        return host, 80, None
+    return None, None, f"ta_server.base_url scheme 不支援: {parsed.scheme or 'empty'}"
+
+
+def wait_for_ta_server_ready(timeout_sec: float, probe_interval_sec: float) -> tuple[bool, str]:
+    host, port, endpoint_error = _resolve_ta_server_endpoint()
+    if endpoint_error:
+        return False, endpoint_error
+
+    deadline = time.monotonic() + max(1.0, timeout_sec)
+    interval = max(0.5, probe_interval_sec)
+    last_error = ""
+
+    while time.monotonic() < deadline:
+        ip = get_interface_ipv4(WIFI_INTERFACE)
+        if not ip:
+            last_error = "尚未取得 Wi-Fi IPv4"
+            time.sleep(interval)
+            continue
+
+        try:
+            socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+            with socket.create_connection((host, port), timeout=min(4.0, interval + 1.0)):
+                return True, f"server reachable: host={host} port={port}"
+        except OSError as exc:
+            last_error = str(exc)
+            time.sleep(interval)
+
+    return False, f"server not ready: host={host} port={port} timeout={timeout_sec:g}s last_error={last_error or 'unknown'}"
+
+
 def finalize_connected_and_login(ssid: str, source: str) -> None:
     state = get_interface_general_state(WIFI_INTERFACE)
     ip = get_interface_ipv4(WIFI_INTERFACE) or "none"
@@ -297,8 +347,36 @@ def finalize_connected_and_login(ssid: str, source: str) -> None:
         f"next=wait {LOGIN_DELAY_SECONDS:g}s then taServer login"
     )
     time.sleep(LOGIN_DELAY_SECONDS)
-    api_ok, api_msg = taServer_API_mac_login('login')
-    log_bootstrap(f"[taServer] {api_msg}")
+
+    ready_ok, ready_msg = wait_for_ta_server_ready(
+        TA_SERVER_READY_TIMEOUT_SECONDS,
+        TA_SERVER_READY_PROBE_INTERVAL_SECONDS,
+    )
+    log_bootstrap(f"[taServer] precheck ok={ready_ok} msg={ready_msg}")
+    if not ready_ok:
+        return
+
+    for attempt in range(1, max(1, LOGIN_MAX_ATTEMPTS) + 1):
+        if attempt > 1:
+            # Progressive backoff gives DHCP/DNS/routing a little more time to settle.
+            wait_seconds = LOGIN_RETRY_INTERVAL_SECONDS * (attempt - 1)
+            log_bootstrap(f"[taServer] retry wait {wait_seconds:g}s before attempt={attempt}")
+            time.sleep(wait_seconds)
+
+        api_ok, api_msg = taServer_API_mac_login("login")
+        state = get_interface_general_state(WIFI_INTERFACE)
+        ip = get_interface_ipv4(WIFI_INTERFACE) or "none"
+        log_bootstrap(
+            f"[taServer] attempt={attempt}/{max(1, LOGIN_MAX_ATTEMPTS)} "
+            f"state={state} ip={ip} ok={api_ok} msg={api_msg}"
+        )
+        if api_ok:
+            return
+
+    log_bootstrap(
+        f"[taServer] login failed after {max(1, LOGIN_MAX_ATTEMPTS)} attempts "
+        f"(ssid={ssid}, source={source})"
+    )
 
 
 def bootstrap_network_on_start() -> bool:

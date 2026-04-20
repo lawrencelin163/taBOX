@@ -57,10 +57,12 @@ def run_heartbeat_forever() -> None:
     log_heartbeat_line(startup_msg)
     log_bootstrap_start_once(startup_msg)
     while True:
-        ok, message = taServer_API_mac_heartbeat(HEARTBEAT_REPLY_DEFAULT)
-        status = "ok" if ok else "failed"
+        heartbeat_sec, message = taServer_API_mac_heartbeat(HEARTBEAT_REPLY_DEFAULT)
         log_heartbeat_line(f"{message}")
-        time.sleep(HEARTBEAT_INTERVAL_SEC)
+        if heartbeat_sec is not None and heartbeat_sec > 10:
+            time.sleep(heartbeat_sec)
+        else:
+            time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
 if __name__ == "__main__":
