@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=yf
+User=root
 WorkingDirectory=/home/yf/GitPS/taBOX
 Environment=WIFI_INTERFACE=wlan0
 Environment=HEARTBEAT_INTERVAL_SEC=600

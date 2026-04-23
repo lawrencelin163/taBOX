@@ -1,0 +1,1 @@
+scp yf@YF2:/tmp/openclaw/openclaw-2026-04-22.log ./log/

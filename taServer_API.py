@@ -12,7 +12,9 @@ from pathlib import Path
 
 from tabox_config import load_config, resolve_project_path
 
-taServer_API_Version = "V 260421 1713"  
+taServer_API_Version = "V 260423 1420"  
+# V 260423 1420 : 把 _WiFi_Check()，改成在 tabox-heartbeat.py 的 裏面做.
+# V 260423 1330 : _WiFi_Check() 裏的 _wifi_connect() ，在連上后，重建 profile，并且設定 autoconnect
 # V 260421 1713 : 改成 download 完成后，SystemExit(0), 由 systemd 來負責重啟服務，這樣可以確保在更新檔案後，新的程式碼能夠被載入並執行，而不需要依賴目前的程式碼來進行重啟，增加了更新的可靠性和成功率。
 # V 260421 1635 : 多了 WiFi_Check 這個 副程式，會在每次 heartbeat 前檢查 WiFi 連線狀態，如果沒有連線就嘗試重新連線，直到成功為止。這樣可以確保在 WiFi 不穩定的環境下，taBOX 仍然能夠保持與 taServer 的連線，並且繼續正常運作。
 # V 260420 2222 : 可以從 server 端收到 action_string 指令，並且下載更新檔案，替換目前的檔案，最後回報更新完成的時間戳記給 server 端。 action_string 格式為 "type|cmd|value"，例如 "File update|File update|https://example.com/taServer_API_test.py" 表示要下載 https://example.com/taServer_API_test.py 這個檔案，然後替換目前的 taServer_API_test.py。
@@ -25,6 +27,7 @@ REQUEST_TIMEOUT = int(TA_SERVER_CONFIG["requests_timeout_seconds"])
 MAC_ADDRESS = TA_SERVER_CONFIG.get("mac_address")
 SELF_UPDATE_LOG_FILE = resolve_project_path(TA_SERVER_CONFIG.get("self_update_log_file", "Temp/self_update.log"))
 WIFI_CONFIG = CONFIG["wifi"]
+WIFI_CHECK_LOG_FILE = resolve_project_path(WIFI_CONFIG.get("wifi_check_log_file", "Temp/wifi_check.log"))
 WIFI_INTERFACE = WIFI_CONFIG["interface"]
 WIFI_SHORT_TIMEOUT = int(WIFI_CONFIG.get("short_timeout_seconds", 8))
 WIFI_CONNECT_TIMEOUT = int(WIFI_CONFIG.get("connect_timeout_seconds", 20))
@@ -59,6 +62,19 @@ def _self_update_print(message: str) -> None:
             f.write(f"[{timestamp}] {line}\n")
     except Exception as log_exc:  # pylint: disable=broad-except
         print(f"[SELF-UPDATE] plain logging failed: {log_exc}")
+
+
+def _wifi_check_log(message: str) -> None:
+    line = f"[WiFiCheck] {message}"
+    print(line, flush=True)
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_file = Path(WIFI_CHECK_LOG_FILE)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {line}\n")
+    except Exception as log_exc:  # pylint: disable=broad-except
+        print(f"[WiFiCheck] logging failed: {log_exc}")
 
 
 def _run_cmd(command: list[str], timeout: int) -> tuple[int, str, str]:
@@ -133,6 +149,7 @@ def _wifi_connect(ssid: str, password: str) -> tuple[bool, str]:
 
     connected, state_detail = _wifi_is_connected(WIFI_INTERFACE)
     if connected:
+        _run_cmd(["nmcli", "connection", "modify", ssid, "connection.autoconnect", "yes"], timeout=WIFI_SHORT_TIMEOUT)
         return True, "connected"
     return False, f"verify-failed: {state_detail}"
 
@@ -142,29 +159,29 @@ def _WiFi_Check() -> None:
     if connected:
         return
 
-    print(f"[WiFiCheck] WiFi disconnected on {WIFI_INTERFACE}: {detail}")
+    _wifi_check_log(f"WiFi disconnected on {WIFI_INTERFACE}: {detail}")
 
     round_count = 0
     while True:
         saved_networks = _normalize_saved_networks(CONFIG.get("saved_networks", []))
         if not saved_networks:
-            print("[WiFiCheck] saved_networks is empty, retry after 10 seconds")
+            _wifi_check_log("saved_networks is empty, retry after 10 seconds")
             time.sleep(10)
             continue
 
         round_count += 1
-        print(f"[WiFiCheck] reconnect round {round_count} start, candidates={len(saved_networks)}")
+        _wifi_check_log(f"reconnect round {round_count} start, candidates={len(saved_networks)}")
         for idx, network in enumerate(saved_networks, start=1):
             ssid = network["ssid_id"]
             password = network["password"]
-            print(f"[WiFiCheck] round={round_count} try={idx}/{len(saved_networks)} ssid={ssid}")
+            _wifi_check_log(f"round={round_count} try={idx}/{len(saved_networks)} ssid={ssid}")
             ok, msg = _wifi_connect(ssid, password)
             if ok:
-                print(f"[WiFiCheck] connected round={round_count} try={idx} ssid={ssid}")
+                _wifi_check_log(f"connected round={round_count} try={idx} ssid={ssid}")
                 return
-            print(f"[WiFiCheck] failed round={round_count} try={idx} ssid={ssid} reason={msg}")
+            _wifi_check_log(f"failed round={round_count} try={idx} ssid={ssid} reason={msg}")
 
-        print(f"[WiFiCheck] all saved SSIDs failed, sleep {WIFI_RETRY_ROUND_DELAY_SECONDS}s then retry")
+        _wifi_check_log(f"all saved SSIDs failed, sleep {WIFI_RETRY_ROUND_DELAY_SECONDS}s then retry")
         time.sleep(WIFI_RETRY_ROUND_DELAY_SECONDS)
 
 def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
@@ -207,9 +224,6 @@ def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
         return False, f"({taServer_API_Version}) {url_info} | Login 例外: {exc}"
 
 def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
-    # login or heartbeat 
-    _WiFi_Check()
-
     api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
     url_info = f"taServer API URL: {api_url}"
     #print(f"[debug] {url_info}")

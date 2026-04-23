@@ -9,3 +9,4 @@ sudo cp /home/$(whoami)/GitPS/taBOX/systemd/openclaw-gateway.service /etc/system
 sudo systemctl daemon-reload
 sudo systemctl enable tabox-init.service
 sudo systemctl start tabox-init.service
+sudo systemctl enable tabox-heartbeat.service
