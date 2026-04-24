@@ -289,6 +289,9 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
                             _self_update_print("restart requested, exit now and let systemd restart service...")
                             raise SystemExit(0)
 
+                    if action_cmd=='bot build':
+                        print(f"Received [bot build] command: {action_value}")
+                        
             except json.JSONDecodeError:
                 mac_id = None
 

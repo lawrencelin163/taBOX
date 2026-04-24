@@ -129,7 +129,7 @@
           "maxTokens": 65536
         }
       ],
-      "apiKey": "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"
+      "apiKey": "sk-or-v1-587473e69010.......7708c5fd626e581fa4ac806"
     },
     "arcee": {
       "baseUrl": "https://openrouter.ai/v1",
@@ -190,7 +190,7 @@
           }
         }
       ],
-      "apiKey": "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"
+      "apiKey": "sk-or-v1-587473e69....81fa4ac806"
     }
   }
 }
