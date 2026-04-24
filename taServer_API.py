@@ -14,7 +14,8 @@ from pathlib import Path
 
 from tabox_config import load_config, resolve_project_path
 
-taServer_API_Version = "V 260423 1420"  
+taServer_API_Version = "V 260424 1138"  
+# V 260424 1138 : 建立 Active Bot / Zip 檔案保留.。
 # V 260423 1420 : 把 _WiFi_Check()，改成在 tabox-heartbeat.py 的 裏面做.
 # V 260423 1330 : _WiFi_Check() 裏的 _wifi_connect() ，在連上后，重建 profile，并且設定 autoconnect
 # V 260421 1713 : 改成 download 完成后，SystemExit(0), 由 systemd 來負責重啟服務，這樣可以確保在更新檔案後，新的程式碼能夠被載入並執行，而不需要依賴目前的程式碼來進行重啟，增加了更新的可靠性和成功率。
@@ -78,14 +79,14 @@ def _activate_gateway_service_by_target(target_path: str) -> tuple[bool, str]:
 
     service_name = f"openclaw-gateway-{suffix}.service"
 
-    reload_code, reload_out, reload_err = _run_cmd(["systemctl", "daemon-reload"], timeout=20)
+    reload_code, reload_out, reload_err = _run_systemctl(["daemon-reload"], timeout=20)
     if reload_code != 0:
-        return False, f"daemon-reload failed: {reload_err or reload_out}"
+        _self_update_print(f"daemon-reload warning: {reload_err or reload_out}")
 
-    code, _, _ = _run_cmd(["systemctl", "is-active", service_name], timeout=10)
+    code, _, _ = _run_systemctl(["is-active", service_name], timeout=10)
     active = code == 0
 
-    enable_code, enable_out, enable_err = _run_cmd(["systemctl", "enable", service_name], timeout=20)
+    enable_code, enable_out, enable_err = _run_systemctl(["enable", service_name], timeout=20)
     if enable_code != 0:
         return False, f"enable failed: {enable_err or enable_out or service_name}"
 
@@ -96,7 +97,7 @@ def _activate_gateway_service_by_target(target_path: str) -> tuple[bool, str]:
         action_cmd = ["systemctl", "start", service_name]
         action_desc = "start"
 
-    run_code, run_out, run_err = _run_cmd(action_cmd, timeout=20)
+    run_code, run_out, run_err = _run_systemctl(action_cmd, timeout=20)
     if run_code != 0:
         return False, f"{action_desc} failed: {run_err or run_out or service_name}"
 
@@ -111,7 +112,8 @@ def _handle_bot_build(action_value: str | None, target_fname: str | None) -> tup
 
     normalized_target = _normalize_unix_path(target_fname)
     target_dir = Path(normalized_target)
-    zip_tmp = target_dir.parent / f"{target_dir.name}_bot_build_tmp.zip"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_tmp = target_dir.parent / f"{target_dir.name}_bot_build_{ts}.zip"
 
     try:
         _self_update_print(f"bot build download: {action_value}")
@@ -128,12 +130,6 @@ def _handle_bot_build(action_value: str | None, target_fname: str | None) -> tup
         return True, f"bot build success ({file_count} files), {service_msg}"
     except Exception as exc:  # pylint: disable=broad-except
         return False, f"bot build exception: {exc}"
-    finally:
-        try:
-            if zip_tmp.exists():
-                zip_tmp.unlink()
-        except Exception as cleanup_exc:  # pylint: disable=broad-except
-            _self_update_print(f"bot build cleanup warning: {cleanup_exc}")
 
 
 def _reply_action_timestamp(action_cmd: str) -> tuple[bool, str, str]:
@@ -219,6 +215,24 @@ def _run_cmd(command: list[str], timeout: int) -> tuple[int, str, str]:
         return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
     except subprocess.TimeoutExpired:
         return 124, "", "command timeout"
+
+
+def _run_systemctl(args: list[str], timeout: int) -> tuple[int, str, str]:
+    code, out, err = _run_cmd(["systemctl", *args], timeout=timeout)
+    if code == 0:
+        return code, out, err
+
+    details = f"{err} {out}".lower()
+    need_auth = "interactive authentication required" in details or "authentication is required" in details
+    if not need_auth:
+        return code, out, err
+
+    sudo_code, sudo_out, sudo_err = _run_cmd(["sudo", "-n", "systemctl", *args], timeout=timeout)
+    if sudo_code == 0:
+        return sudo_code, sudo_out, sudo_err
+
+    merged_err = sudo_err or err or out
+    return sudo_code, sudo_out, merged_err
 
 
 def _wifi_ipv4(interface: str) -> str | None:
