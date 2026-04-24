@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +35,138 @@ WIFI_SHORT_TIMEOUT = int(WIFI_CONFIG.get("short_timeout_seconds", 8))
 WIFI_CONNECT_TIMEOUT = int(WIFI_CONFIG.get("connect_timeout_seconds", 20))
 WIFI_NMCLI_WAIT = int(WIFI_CONFIG.get("nmcli_wait_seconds", 15))
 WIFI_RETRY_ROUND_DELAY_SECONDS = 10
+
+
+def _normalize_unix_path(raw_path: str) -> str:
+    return raw_path.replace("\\", "/").strip()
+
+
+def _extract_zip_to_target(zip_path: Path, target_dir: Path) -> int:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    extracted_count = 0
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            # Prevent zip-slip and ignore directory entries.
+            normalized = Path(member.filename)
+            if member.is_dir():
+                continue
+
+            safe_parts = [part for part in normalized.parts if part not in ("", ".")]
+            if not safe_parts or any(part == ".." for part in safe_parts):
+                continue
+
+            dest_path = target_dir.joinpath(*safe_parts)
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member, "r") as src, dest_path.open("wb") as dst:
+                dst.write(src.read())
+            extracted_count += 1
+
+    return extracted_count
+
+
+def _service_suffix_from_target(target_path: str) -> str | None:
+    normalized = _normalize_unix_path(target_path)
+    match = re.search(r"(\d+)\s*$", normalized)
+    return match.group(1) if match else None
+
+
+def _activate_gateway_service_by_target(target_path: str) -> tuple[bool, str]:
+    suffix = _service_suffix_from_target(target_path)
+    if not suffix:
+        return False, f"unable to parse service suffix from target_fname={target_path}"
+
+    service_name = f"openclaw-gateway-{suffix}.service"
+
+    reload_code, reload_out, reload_err = _run_cmd(["systemctl", "daemon-reload"], timeout=20)
+    if reload_code != 0:
+        return False, f"daemon-reload failed: {reload_err or reload_out}"
+
+    code, _, _ = _run_cmd(["systemctl", "is-active", service_name], timeout=10)
+    active = code == 0
+
+    enable_code, enable_out, enable_err = _run_cmd(["systemctl", "enable", service_name], timeout=20)
+    if enable_code != 0:
+        return False, f"enable failed: {enable_err or enable_out or service_name}"
+
+    if active:
+        action_cmd = ["systemctl", "restart", service_name]
+        action_desc = "restart"
+    else:
+        action_cmd = ["systemctl", "start", service_name]
+        action_desc = "start"
+
+    run_code, run_out, run_err = _run_cmd(action_cmd, timeout=20)
+    if run_code != 0:
+        return False, f"{action_desc} failed: {run_err or run_out or service_name}"
+
+    return True, f"service {service_name} enabled and {action_desc}ed"
+
+
+def _handle_bot_build(action_value: str | None, target_fname: str | None) -> tuple[bool, str]:
+    if not action_value:
+        return False, "missing action_value for bot build"
+    if not target_fname:
+        return False, "missing target_fname for bot build"
+
+    normalized_target = _normalize_unix_path(target_fname)
+    target_dir = Path(normalized_target)
+    zip_tmp = target_dir.parent / f"{target_dir.name}_bot_build_tmp.zip"
+
+    try:
+        _self_update_print(f"bot build download: {action_value}")
+        urllib.request.urlretrieve(action_value, str(zip_tmp))
+        _self_update_print(f"bot build zip downloaded: {zip_tmp}")
+
+        file_count = _extract_zip_to_target(zip_tmp, target_dir)
+        _self_update_print(f"bot build extracted files={file_count} target={target_dir}")
+
+        ok, service_msg = _activate_gateway_service_by_target(normalized_target)
+        if not ok:
+            return False, service_msg
+
+        return True, f"bot build success ({file_count} files), {service_msg}"
+    except Exception as exc:  # pylint: disable=broad-except
+        return False, f"bot build exception: {exc}"
+    finally:
+        try:
+            if zip_tmp.exists():
+                zip_tmp.unlink()
+        except Exception as cleanup_exc:  # pylint: disable=broad-except
+            _self_update_print(f"bot build cleanup warning: {cleanup_exc}")
+
+
+def _reply_action_timestamp(action_cmd: str) -> tuple[bool, str, str]:
+    utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
+    replystr = f"{utc_time}"
+    api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
+    req = urllib.request.Request(api_url, method="GET")
+
+    try:
+        _self_update_print(f'reply to server ({action_cmd}): "{api_url}"')
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            status_code = resp.getcode()
+            body = resp.read().decode("utf-8", errors="replace")
+            return True, f"Reply to server ({action_cmd}): HTTP {status_code} body={body[:180]}", api_url
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        return False, f"Reply HTTPError ({action_cmd}): {exc.code} body={body[:180]}", api_url
+    except urllib.error.URLError as exc:
+        return False, f"Reply URLError ({action_cmd}): {exc.reason}", api_url
+    except Exception as exc:  # pylint: disable=broad-except
+        return False, f"Reply exception ({action_cmd}): {exc}", api_url
+
+
+def _finalize_action(action_cmd: str, ok: bool, detail: str) -> str:
+    status_text = "success" if ok else "failed"
+    _self_update_print(f"[{action_cmd}] {status_text}: {detail}")
+
+    reply_ok, reply_msg, reply_api_url = _reply_action_timestamp(action_cmd)
+    if reply_ok:
+        _self_update_print(reply_msg)
+    else:
+        _self_update_print(f"[{action_cmd}] reply failed: {reply_msg}")
+    return reply_api_url
 
 
 def _append_self_update_log(payload: object, api_url: str) -> None:
@@ -260,37 +394,34 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
 
                 if action_type :
                     if action_cmd=='File update':
+                        file_update_ok = False
+                        file_update_msg = ""
                         fname = target_fname # "taServer_API_test.py"
-                        _self_update_print(f"Download....{fname}_tmp from [taServer file exchange center].\\n{action_value}")
-                        urllib.request.urlretrieve(action_value, f"{fname}_tmp")
-                        _self_update_print(f"Download complete : {fname}_tmp")
-                        if os.path.exists(fname):
-                            os.remove(fname)
-                            #print("Old file removed:", fname)
-                        os.rename(f"{fname}_tmp", fname)
-                        _self_update_print(f"Updated file finished: {fname}")
+                        try:
+                            _self_update_print(f"Download....{fname}_tmp from [taServer file exchange center].\\n{action_value}")
+                            urllib.request.urlretrieve(action_value, f"{fname}_tmp")
+                            _self_update_print(f"Download complete : {fname}_tmp")
+                            if os.path.exists(fname):
+                                os.remove(fname)
+                                #print("Old file removed:", fname)
+                            os.rename(f"{fname}_tmp", fname)
+                            file_update_ok = True
+                            file_update_msg = f"updated file finished: {fname}"
+                        except Exception as exc:  # pylint: disable=broad-except
+                            file_update_msg = f"file update exception: {exc}"
 
-                        utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
-                        replystr = f"{utc_time}"
-                        api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
-                        url_info = f'reply to server: "{api_url}"'
-                        req = urllib.request.Request(api_url, method="GET")
+                        reply_api_url = _finalize_action(action_cmd, file_update_ok, file_update_msg)
 
-                        _self_update_print(url_info)
-                        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-                            status_code = resp.getcode()
-                            body = resp.read().decode("utf-8", errors="replace")
-                            _self_update_print(f"Reply to server: HTTP {status_code} body={body[:180]}")
-
-                        if os_exec_str == 'SELF':
+                        if file_update_ok and os_exec_str == 'SELF':
                             # Keep full payload in log before replacing current process.
-                            _append_self_update_log(payload, url_info)
+                            _append_self_update_log(payload, reply_api_url)
 
                             _self_update_print("restart requested, exit now and let systemd restart service...")
                             raise SystemExit(0)
 
                     if action_cmd=='bot build':
-                        print(f"Received [bot build] command: {action_value}")
+                        ok, bot_build_msg = _handle_bot_build(action_value, target_fname)
+                        _finalize_action(action_cmd, ok, bot_build_msg)
                         
             except json.JSONDecodeError:
                 mac_id = None

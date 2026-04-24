@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenClaw Gateway-9
+After=network.target
+
+[Service]
+Type=simple
+User=yf
+WorkingDirectory=/home/yf/.openclaw-9
+ExecStart=/usr/local/bin/openclaw --profile 9 gateway
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
