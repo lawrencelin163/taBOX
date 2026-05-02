@@ -7,7 +7,15 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-CONFIG_FILE = PROJECT_ROOT / "taBOX.json"
+
+#如果有多個 taBOX_M*.json，會取字母順序第一個的作為配置文件，否則默認使用 taBOX.json
+def _find_config_file() -> Path:
+    candidates = sorted(PROJECT_ROOT.glob("taBOX_M*.json"))
+    if candidates:
+        return candidates[0]
+    return PROJECT_ROOT / "taBOX.json"
+
+CONFIG_FILE = _find_config_file()
 
 
 @lru_cache(maxsize=1)

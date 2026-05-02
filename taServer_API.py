@@ -3,43 +3,95 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
-import sys
-import time
+import shlex
+import shutil
 import urllib.error
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tabox_config import load_config, resolve_project_path
+from tabox_config import load_config
+from taSystemCmd import _run_cmd, _run_systemctl
+from taWifi import WIFI_INTERFACE
+from taLog import _self_update_print, _append_self_update_log
 
-taServer_API_Version = "V 260424 1138"  
-# V 260424 1138 : 建立 Active Bot / Zip 檔案保留.。
-# V 260423 1420 : 把 _WiFi_Check()，改成在 tabox-heartbeat.py 的 裏面做.
-# V 260423 1330 : _WiFi_Check() 裏的 _wifi_connect() ，在連上后，重建 profile，并且設定 autoconnect
-# V 260421 1713 : 改成 download 完成后，SystemExit(0), 由 systemd 來負責重啟服務，這樣可以確保在更新檔案後，新的程式碼能夠被載入並執行，而不需要依賴目前的程式碼來進行重啟，增加了更新的可靠性和成功率。
-# V 260421 1635 : 多了 WiFi_Check 這個 副程式，會在每次 heartbeat 前檢查 WiFi 連線狀態，如果沒有連線就嘗試重新連線，直到成功為止。這樣可以確保在 WiFi 不穩定的環境下，taBOX 仍然能夠保持與 taServer 的連線，並且繼續正常運作。
-# V 260420 2222 : 可以從 server 端收到 action_string 指令，並且下載更新檔案，替換目前的檔案，最後回報更新完成的時間戳記給 server 端。 action_string 格式為 "type|cmd|value"，例如 "File update|File update|https://example.com/taServer_API_test.py" 表示要下載 https://example.com/taServer_API_test.py 這個檔案，然後替換目前的 taServer_API_test.py。
+taServer_API_Version = "V 260502-1613"
+# V 260502b    : action_cmd / action_value 直接從 payload 讀取，不再用 action_string | split。
+# V 260502b    : server_request 改名為 CopyFiles。
+# V 260502 SRQ : 增加 server_request.json 執行流程，支援 file_copy 覆蓋與 exec_comd 執行。
+# V 260502     : heartbeat 只處理 server_request，移除其他舊 cmd 流程。
 
 CONFIG = load_config()
 TA_SERVER_CONFIG = CONFIG["ta_server"]
 TA_SERVER_URL = TA_SERVER_CONFIG["base_url"].rstrip("/")
 MAC_TOKEN = TA_SERVER_CONFIG["mac_token"]
 REQUEST_TIMEOUT = int(TA_SERVER_CONFIG["requests_timeout_seconds"])
-MAC_ADDRESS = TA_SERVER_CONFIG.get("mac_address")
-SELF_UPDATE_LOG_FILE = resolve_project_path(TA_SERVER_CONFIG.get("self_update_log_file", "Temp/self_update.log"))
-WIFI_CONFIG = CONFIG["wifi"]
-WIFI_CHECK_LOG_FILE = resolve_project_path(WIFI_CONFIG.get("wifi_check_log_file", "Temp/wifi_check.log"))
-WIFI_INTERFACE = WIFI_CONFIG["interface"]
-WIFI_SHORT_TIMEOUT = int(WIFI_CONFIG.get("short_timeout_seconds", 8))
-WIFI_CONNECT_TIMEOUT = int(WIFI_CONFIG.get("connect_timeout_seconds", 20))
-WIFI_NMCLI_WAIT = int(WIFI_CONFIG.get("nmcli_wait_seconds", 15))
-WIFI_RETRY_ROUND_DELAY_SECONDS = 10
+
+
+def _read_linux_mac_address(preferred_interface: str | None = None) -> str | None:
+    sys_class_net = Path("/sys/class/net")
+    if not sys_class_net.exists():
+        return None
+
+    interfaces: list[str] = []
+    if preferred_interface:
+        interfaces.append(preferred_interface)
+
+    try:
+        for nic in sorted(os.listdir(sys_class_net)):
+            if nic == "lo" or nic in interfaces:
+                continue
+            interfaces.append(nic)
+    except OSError:
+        return None
+
+    mac_pattern = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+    for nic in interfaces:
+        addr_file = sys_class_net / nic / "address"
+        try:
+            mac = addr_file.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            continue
+
+        if mac_pattern.match(mac) and mac != "00:00:00:00:00:00":
+            return mac
+
+    return None
+
+
+MAC_ADDRESS = str(TA_SERVER_CONFIG.get("mac_address") or "").strip() or _read_linux_mac_address(WIFI_INTERFACE)
 
 
 def _normalize_unix_path(raw_path: str) -> str:
     return raw_path.replace("\\", "/").strip()
+
+
+def _normalize_file_copy_items(raw_items: object) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+
+    if isinstance(raw_items, list) and len(raw_items) == 2 and all(isinstance(x, str) for x in raw_items):
+        src = raw_items[0].strip()
+        dst = raw_items[1].strip()
+        if src and dst:
+            return [(src, dst)]
+
+    if not isinstance(raw_items, list):
+        return items
+
+    for item in raw_items:
+        if isinstance(item, list) and len(item) == 2:
+            src = str(item[0]).strip()
+            dst = str(item[1]).strip()
+            if src and dst:
+                items.append((src, dst))
+        elif isinstance(item, dict):
+            src = str(item.get("src", "")).strip()
+            dst = str(item.get("des", item.get("dst", ""))).strip()
+            if src and dst:
+                items.append((src, dst))
+
+    return items
 
 
 def _extract_zip_to_target(zip_path: Path, target_dir: Path) -> int:
@@ -48,7 +100,6 @@ def _extract_zip_to_target(zip_path: Path, target_dir: Path) -> int:
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         for member in zf.infolist():
-            # Prevent zip-slip and ignore directory entries.
             normalized = Path(member.filename)
             if member.is_dir():
                 continue
@@ -66,70 +117,187 @@ def _extract_zip_to_target(zip_path: Path, target_dir: Path) -> int:
     return extracted_count
 
 
-def _service_suffix_from_target(target_path: str) -> str | None:
-    normalized = _normalize_unix_path(target_path)
-    match = re.search(r"(\d+)\s*$", normalized)
-    return match.group(1) if match else None
+def _find_extracted_source_file(search_root: Path, src_name: str) -> Path | None:
+    normalized_src = _normalize_unix_path(src_name)
+    direct = (search_root / normalized_src).resolve()
+    if direct.exists() and direct.is_file():
+        return direct
+
+    normalized_parts = tuple(part for part in Path(normalized_src).parts if part not in ("", "."))
+    basename = Path(normalized_src).name
+    matches: list[Path] = []
+
+    for candidate in search_root.rglob("*"):
+        if not candidate.is_file():
+            continue
+        if candidate.name != basename:
+            continue
+
+        relative_parts = candidate.relative_to(search_root).parts
+        if normalized_parts and tuple(relative_parts[-len(normalized_parts):]) == normalized_parts:
+            return candidate
+        matches.append(candidate)
+
+    return sorted(matches)[0] if matches else None
 
 
-def _activate_gateway_service_by_target(target_path: str) -> tuple[bool, str]:
-    suffix = _service_suffix_from_target(target_path)
-    if not suffix:
-        return False, f"unable to parse service suffix from target_fname={target_path}"
+def _normalize_exec_commands(raw_exec: object) -> tuple[bool, list[str], str]:
+    if isinstance(raw_exec, str):
+        exec_list = [raw_exec.strip()] if raw_exec.strip() else []
+        return True, exec_list, ""
 
-    service_name = f"openclaw-gateway-{suffix}.service"
+    if isinstance(raw_exec, list):
+        exec_list = [str(cmd).strip() for cmd in raw_exec if str(cmd).strip()]
+        return True, exec_list, ""
 
-    reload_code, reload_out, reload_err = _run_systemctl(["daemon-reload"], timeout=20)
-    if reload_code != 0:
-        _self_update_print(f"daemon-reload warning: {reload_err or reload_out}")
+    return False, [], "exec_comd must be a string or list"
 
-    code, _, _ = _run_systemctl(["is-active", service_name], timeout=10)
-    active = code == 0
 
-    enable_code, enable_out, enable_err = _run_systemctl(["enable", service_name], timeout=20)
-    if enable_code != 0:
-        return False, f"enable failed: {enable_err or enable_out or service_name}"
+def _resolve_named_exec_command(cmd_text: str) -> tuple[str, str]:
+    normalized = cmd_text.strip()
+    named_commands = {
+        "Restart-taBOX-heartbeat": "deferred:restart-self",
+    }
+    resolved = named_commands.get(normalized, "")
+    return normalized, resolved
 
-    if active:
-        action_cmd = ["systemctl", "restart", service_name]
-        action_desc = "restart"
+#現在可以這樣寫 exec_comd
+#只 copy 檔案, 沒有 command 執行
+#  "exec_comd": []
+#}只重啟 heartbeat，自動在 finalize 後退出
+#  "exec_comd": [ "Restart-taBOX-heartbeat" ]
+#直接使用原本 shell / systemctl 指令也可以
+#  "exec_comd": [
+#    "sudo systemctl stop openclaw-gateway-1.service",
+#    "sudo systemctl restart openclaw-gateway-1.service"
+#  ]
+
+
+
+def _run_exec_command(cmd_text: str) -> tuple[bool, str]:
+    _, named_target = _resolve_named_exec_command(cmd_text)
+    actual_cmd = named_target or cmd_text.strip()
+
+    if actual_cmd.startswith("deferred:"):
+        return True, actual_cmd
+
+    if actual_cmd.startswith("systemctl:"):
+        parts = shlex.split(actual_cmd.split(":", 1)[1])
+        code, out, err = _run_systemctl(parts, timeout=30)
+        if code != 0:
+            return False, err or out or str(code)
+        return True, actual_cmd
+
+    normalized_cmd = actual_cmd.strip()
+    if normalized_cmd.startswith("sudo "):
+        normalized_cmd = normalized_cmd[5:].strip()
+
+    if normalized_cmd.startswith("systemctl "):
+        parts = shlex.split(normalized_cmd)
+        code, out, err = _run_systemctl(parts[1:], timeout=30)
     else:
-        action_cmd = ["systemctl", "start", service_name]
-        action_desc = "start"
+        parts = shlex.split(actual_cmd)
+        code, out, err = _run_cmd(parts, timeout=30)
 
-    run_code, run_out, run_err = _run_systemctl(action_cmd, timeout=20)
-    if run_code != 0:
-        return False, f"{action_desc} failed: {run_err or run_out or service_name}"
-
-    return True, f"service {service_name} enabled and {action_desc}ed"
+    if code != 0:
+        return False, err or out or str(code)
+    return True, actual_cmd
 
 
-def _handle_bot_build(action_value: str | None, target_fname: str | None) -> tuple[bool, str]:
+def _run_deferred_exec_commands(deferred_exec_list: list[str]) -> None:
+    for deferred_cmd in deferred_exec_list:
+        if deferred_cmd == "deferred:restart-self":
+            _self_update_print("deferred exec: restart tabox-heartbeat after finalize")
+            raise SystemExit(0)
+
+
+def _handle_copyfiles_request(action_value: str | None) -> tuple[bool, str, list[str]]:
     if not action_value:
-        return False, "missing action_value for bot build"
-    if not target_fname:
-        return False, "missing target_fname for bot build"
+        return False, "missing action_value for server request", []
 
-    normalized_target = _normalize_unix_path(target_fname)
-    target_dir = Path(normalized_target)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_tmp = target_dir.parent / f"{target_dir.name}_bot_build_{ts}.zip"
+    request_payload: object
+    tmp_zip_path: Path | None = None
+    extract_dir: Path | None = None
+    raw_url = action_value.strip()
+    deferred_exec_list: list[str] = []
 
     try:
-        _self_update_print(f"bot build download: {action_value}")
-        urllib.request.urlretrieve(action_value, str(zip_tmp))
-        _self_update_print(f"bot build zip downloaded: {zip_tmp}")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tmp_dir = Path("Temp")
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_zip_path = tmp_dir / f"server_request_{ts}.zip"
+        extract_dir = tmp_dir / f"server_request_{ts}_extracted"
 
-        file_count = _extract_zip_to_target(zip_tmp, target_dir)
-        _self_update_print(f"bot build extracted files={file_count} target={target_dir}")
+        _self_update_print(f"server request download: {raw_url}")
+        urllib.request.urlretrieve(raw_url, str(tmp_zip_path))
+        file_count = _extract_zip_to_target(tmp_zip_path, extract_dir)
+        _self_update_print(f"server request extracted files={file_count} to {extract_dir}")
 
-        ok, service_msg = _activate_gateway_service_by_target(normalized_target)
-        if not ok:
-            return False, service_msg
+        request_json_path = _find_extracted_source_file(extract_dir, "server_request.json")
+        if request_json_path is None:
+            return False, "server_request.json not found in downloaded package", []
 
-        return True, f"bot build success ({file_count} files), {service_msg}"
+        request_payload = json.loads(request_json_path.read_text(encoding="utf-8"))
+
+        if not isinstance(request_payload, dict):
+            return False, "server request payload must be an object", []
+
+        copy_items = _normalize_file_copy_items(request_payload.get("file_copy"))
+        if not copy_items:
+            return False, "server request missing valid file_copy entries", []
+
+        copied_count = 0
+        for src_raw, dst_raw in copy_items:
+            src_path = _find_extracted_source_file(extract_dir, src_raw)
+            dst_path = Path(_normalize_unix_path(dst_raw)).expanduser()
+
+            if not dst_path.is_absolute():
+                dst_path = (Path.cwd() / dst_path).resolve()
+
+            if src_path is None:
+                return False, f"copy source missing in extracted package: {src_raw}", []
+
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+            copied_count += 1
+            _self_update_print(f"server request copy: {src_path} -> {dst_path}")
+
+        exec_ok, exec_list, exec_error = _normalize_exec_commands(request_payload.get("exec_comd", []))
+        if not exec_ok:
+            return False, exec_error, []
+
+        exec_count = 0
+        for cmd_text in exec_list:
+            run_ok, run_result = _run_exec_command(cmd_text)
+            if not run_ok:
+                return False, f"exec failed ({cmd_text}): {run_result}", deferred_exec_list
+
+            if run_result.startswith("deferred:"):
+                deferred_exec_list.append(run_result)
+                _self_update_print(f"server request defer exec: {cmd_text}")
+                continue
+
+            exec_count += 1
+            _self_update_print(f"server request exec ok: {cmd_text}")
+
+        return True, f"server request done (copied={copied_count}, exec={exec_count}, deferred={len(deferred_exec_list)})", deferred_exec_list
+    except json.JSONDecodeError as exc:
+        return False, f"server request json decode error: {exc}", deferred_exec_list
+    except zipfile.BadZipFile as exc:
+        return False, f"server request zip error: {exc}", deferred_exec_list
     except Exception as exc:  # pylint: disable=broad-except
-        return False, f"bot build exception: {exc}"
+        return False, f"server request exception: {exc}", deferred_exec_list
+    finally:
+        try:
+            if extract_dir and extract_dir.exists():
+                shutil.rmtree(extract_dir)
+        except Exception:  # pylint: disable=broad-except
+            pass
+        try:
+            if tmp_zip_path and tmp_zip_path.exists():
+                tmp_zip_path.unlink()
+        except Exception:  # pylint: disable=broad-except
+            pass
 
 
 def _reply_action_timestamp(action_cmd: str) -> tuple[bool, str, str]:
@@ -165,175 +333,7 @@ def _finalize_action(action_cmd: str, ok: bool, detail: str) -> str:
     return reply_api_url
 
 
-def _append_self_update_log(payload: object, api_url: str) -> None:
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        line = f"[{timestamp}] api={api_url} payload={payload_text}"
-
-        log_file = Path(SELF_UPDATE_LOG_FILE)
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with log_file.open("a", encoding="utf-8") as f:
-            f.write(line)
-            f.write("\n")
-        print(f"[SELF-UPDATE] payload logged to {SELF_UPDATE_LOG_FILE}")
-    except Exception as payload_exc:  # pylint: disable=broad-except
-        print(f"[SELF-UPDATE] payload logging failed: {payload_exc}")
-
-
-def _self_update_print(message: str) -> None:
-    line = f"[SELF-UPDATE] {message}"
-    print(line)
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_file = Path(SELF_UPDATE_LOG_FILE)
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with log_file.open("a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] {line}\n")
-    except Exception as log_exc:  # pylint: disable=broad-except
-        print(f"[SELF-UPDATE] plain logging failed: {log_exc}")
-
-
-def _wifi_check_log(message: str) -> None:
-    line = f"[WiFiCheck] {message}"
-    print(line, flush=True)
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_file = Path(WIFI_CHECK_LOG_FILE)
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with log_file.open("a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] {line}\n")
-    except Exception as log_exc:  # pylint: disable=broad-except
-        print(f"[WiFiCheck] logging failed: {log_exc}")
-
-
-def _run_cmd(command: list[str], timeout: int) -> tuple[int, str, str]:
-    env = os.environ.copy()
-    env["LC_ALL"] = "C"
-    try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=env)
-        return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return 124, "", "command timeout"
-
-
-def _run_systemctl(args: list[str], timeout: int) -> tuple[int, str, str]:
-    code, out, err = _run_cmd(["systemctl", *args], timeout=timeout)
-    if code == 0:
-        return code, out, err
-
-    details = f"{err} {out}".lower()
-    need_auth = "interactive authentication required" in details or "authentication is required" in details
-    if not need_auth:
-        return code, out, err
-
-    sudo_code, sudo_out, sudo_err = _run_cmd(["sudo", "-n", "systemctl", *args], timeout=timeout)
-    if sudo_code == 0:
-        return sudo_code, sudo_out, sudo_err
-
-    merged_err = sudo_err or err or out
-    return sudo_code, sudo_out, merged_err
-
-
-def _wifi_ipv4(interface: str) -> str | None:
-    code, out, _ = _run_cmd(["nmcli", "-g", "IP4.ADDRESS", "device", "show", interface], timeout=WIFI_SHORT_TIMEOUT)
-    if code != 0 or not out:
-        return None
-    first = out.splitlines()[0].strip()
-    if not first:
-        return None
-    return first.split("/", 1)[0]
-
-
-def _wifi_is_connected(interface: str) -> tuple[bool, str]:
-    code, out, err = _run_cmd(["nmcli", "-g", "GENERAL.STATE", "device", "show", interface], timeout=WIFI_SHORT_TIMEOUT)
-    if code != 0:
-        return False, f"state-check-failed: {err or out or 'nmcli error'}"
-
-    state = out.splitlines()[0].strip() if out else "unknown"
-    ip = _wifi_ipv4(interface)
-    if "100 (connected)" in state and ip:
-        return True, f"connected, ip={ip}"
-    return False, f"state={state}, ip={ip or 'none'}"
-
-
-def _normalize_saved_networks(raw_networks: object) -> list[dict[str, str]]:
-    if not isinstance(raw_networks, list):
-        return []
-
-    result: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for item in raw_networks:
-        if not isinstance(item, dict):
-            continue
-        ssid = str(item.get("ssid_id", "")).strip()
-        password = str(item.get("password", "")).strip()
-        if not ssid or ssid in seen:
-            continue
-        seen.add(ssid)
-        result.append({"ssid_id": ssid, "password": password})
-    return result
-
-
-def _wifi_connect(ssid: str, password: str) -> tuple[bool, str]:
-    _run_cmd(["nmcli", "device", "disconnect", WIFI_INTERFACE], timeout=WIFI_SHORT_TIMEOUT)
-    _run_cmd(["nmcli", "connection", "delete", ssid], timeout=WIFI_SHORT_TIMEOUT)
-
-    connect_cmd = ["nmcli", "--wait", str(WIFI_NMCLI_WAIT), "device", "wifi", "connect", ssid, "ifname", WIFI_INTERFACE]
-    if password:
-        connect_cmd.extend(["password", password])
-
-    code, out, err = _run_cmd(connect_cmd, timeout=WIFI_CONNECT_TIMEOUT)
-    if code != 0:
-        details = (err or out or "nmcli connect failed").strip()
-        lower = details.lower()
-        if code == 124 or "timeout" in lower:
-            return False, f"TIMEOUT: {details}"
-        if "wrong password" in lower or "secrets were required" in lower or "802-11-wireless-security" in lower:
-            return False, f"PASSWORD: {details}"
-        if "no network with ssid" in lower or "ssid not found" in lower or "not found" in lower:
-            return False, f"NO_AP: {details}"
-        return False, f"OTHER: {details}"
-
-    connected, state_detail = _wifi_is_connected(WIFI_INTERFACE)
-    if connected:
-        _run_cmd(["nmcli", "connection", "modify", ssid, "connection.autoconnect", "yes"], timeout=WIFI_SHORT_TIMEOUT)
-        return True, "connected"
-    return False, f"verify-failed: {state_detail}"
-
-
-def _WiFi_Check() -> None:
-    connected, detail = _wifi_is_connected(WIFI_INTERFACE)
-    if connected:
-        return
-
-    _wifi_check_log(f"WiFi disconnected on {WIFI_INTERFACE}: {detail}")
-
-    round_count = 0
-    while True:
-        saved_networks = _normalize_saved_networks(CONFIG.get("saved_networks", []))
-        if not saved_networks:
-            _wifi_check_log("saved_networks is empty, retry after 10 seconds")
-            time.sleep(10)
-            continue
-
-        round_count += 1
-        _wifi_check_log(f"reconnect round {round_count} start, candidates={len(saved_networks)}")
-        for idx, network in enumerate(saved_networks, start=1):
-            ssid = network["ssid_id"]
-            password = network["password"]
-            _wifi_check_log(f"round={round_count} try={idx}/{len(saved_networks)} ssid={ssid}")
-            ok, msg = _wifi_connect(ssid, password)
-            if ok:
-                _wifi_check_log(f"connected round={round_count} try={idx} ssid={ssid}")
-                return
-            _wifi_check_log(f"failed round={round_count} try={idx} ssid={ssid} reason={msg}")
-
-        _wifi_check_log(f"all saved SSIDs failed, sleep {WIFI_RETRY_ROUND_DELAY_SECONDS}s then retry")
-        time.sleep(WIFI_RETRY_ROUND_DELAY_SECONDS)
-
 def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
-    # login or heartbeat 
     if not MAC_TOKEN:
         return False, "taServer mac login 失敗: 缺少 mac_token 設定"
     if not MAC_ADDRESS:
@@ -374,74 +374,42 @@ def taServer_API_mac_login(typestr: str) -> tuple[bool, str]:
 def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
     api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
     url_info = f"taServer API URL: {api_url}"
-    #print(f"[debug] {url_info}")
-
     req = urllib.request.Request(api_url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             status_code = resp.getcode()
             body = resp.read().decode("utf-8", errors="replace")
             mac_id = None
+            heartbeat_count = None
             heartbeat_sec = None
-            action_type = None
             action_cmd = None
             action_value = None
 
             try:
                 payload = json.loads(body)
-
+                #Server payload 預期格式：
+                #{
+                #"mac_id": "...",
+                #"heartbeat_count": 1,
+                #"heartbeat_sec": 30,
+                #"action_cmd": "CopyFiles",
+                #"action_value": "https://your-server.com/path/to/package.zip"
+                #}
                 if isinstance(payload, dict):
-                    print
                     mac_id = payload.get("mac_id")
                     heartbeat_count = payload.get("heartbeat_count")
                     heartbeat_sec = payload.get("heartbeat_sec")
-                    action_string = payload.get("action_string")
-                    target_fname = payload.get("target_fname")
-                    os_exec_str  = payload.get("os_exec_str")
-                    if action_string:
-                        parts = action_string.split("|", 2)  # limit to 3 parts
-                        if len(parts) == 3:
-                            action_type, action_cmd, action_value = parts
-                        else:
-                            # fallback handling if format is broken
-                            action_type = action_string
+                    action_cmd = payload.get("action_cmd")
+                    action_value = payload.get("action_value")
 
-                if action_type :
-                    if action_cmd=='File update':
-                        file_update_ok = False
-                        file_update_msg = ""
-                        fname = target_fname # "taServer_API_test.py"
-                        try:
-                            _self_update_print(f"Download....{fname}_tmp from [taServer file exchange center].\\n{action_value}")
-                            urllib.request.urlretrieve(action_value, f"{fname}_tmp")
-                            _self_update_print(f"Download complete : {fname}_tmp")
-                            if os.path.exists(fname):
-                                os.remove(fname)
-                                #print("Old file removed:", fname)
-                            os.rename(f"{fname}_tmp", fname)
-                            file_update_ok = True
-                            file_update_msg = f"updated file finished: {fname}"
-                        except Exception as exc:  # pylint: disable=broad-except
-                            file_update_msg = f"file update exception: {exc}"
-
-                        reply_api_url = _finalize_action(action_cmd, file_update_ok, file_update_msg)
-
-                        if file_update_ok and os_exec_str == 'SELF':
-                            # Keep full payload in log before replacing current process.
-                            _append_self_update_log(payload, reply_api_url)
-
-                            _self_update_print("restart requested, exit now and let systemd restart service...")
-                            raise SystemExit(0)
-
-                    if action_cmd=='bot build':
-                        ok, bot_build_msg = _handle_bot_build(action_value, target_fname)
-                        _finalize_action(action_cmd, ok, bot_build_msg)
+                if action_cmd == "CopyFiles":
+                    ok, server_request_msg, deferred_exec_list = _handle_copyfiles_request(action_value)
+                    _finalize_action(action_cmd, ok, server_request_msg)
+                    if ok:
+                        _run_deferred_exec_commands(deferred_exec_list)
                         
             except json.JSONDecodeError:
                 mac_id = None
-
-            #if mac_id:
-            #    print(f'taServer: "{mac_id}", "{action_type}", "{action_cmd}", "{action_value}"')
 
             if 200 <= status_code < 300:
                 if mac_id:

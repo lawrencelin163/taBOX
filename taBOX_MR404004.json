@@ -17,15 +17,6 @@
     "heartbeat_reply": "none",
     "requests_timeout_seconds": 8
   },
-  "bot_list": [
-    {
-      "bot_id": "BAAA0007",
-      "bot_username": "@taBOX101_bot",
-      "bot_name": "taBOX101",
-      "bot_token": "8675851679:AAFKQBrtAKGvGTv7l_gXr1UCPwlpd4vW8ME",
-      "chat_id": "6426368377"
-    }
-  ],
   "wifi": {
     "interface": "wlan0",
     "short_timeout_seconds": 8,
