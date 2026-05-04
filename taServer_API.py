@@ -229,11 +229,11 @@ def _handle_copyfiles_request(action_value: str | None) -> tuple[bool, str, list
         extract_dir = tmp_dir / f"server_request_{ts}_extracted"
 
         _self_update_print(f"server request download: {raw_url}")
-        urllib.request.urlretrieve(raw_url, str(tmp_zip_path))
-        file_count = _extract_zip_to_target(tmp_zip_path, extract_dir)
-        _self_update_print(f"server request extracted files={file_count} to {extract_dir}")
+        urllib.request.urlretrieve(raw_url, str(tmp_zip_path))                               # 下載檔案
+        file_count = _extract_zip_to_target(tmp_zip_path, extract_dir)                       # 解壓縮檔案到 tmp_zip_path
+        _self_update_print(f"server request extracted files={file_count} to {extract_dir}")  # 存到 log
 
-        request_json_path = _find_extracted_source_file(extract_dir, "server_request.json")
+        request_json_path = _find_extracted_source_file(extract_dir, "server_request.json")  # server 檔案的描述，server 提供給 mac 的
         if request_json_path is None:
             return False, "server_request.json not found in downloaded package", []
 
