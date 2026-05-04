@@ -1,1 +1,0 @@
-ssh yf@YF2 "cd /home/yf/.openclaw && tar -cf - openclaw.json agents/main/agent/*.json" | tar -xf -
