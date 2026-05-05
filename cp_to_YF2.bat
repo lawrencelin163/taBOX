@@ -6,7 +6,7 @@
 echo lcd "."
 echo put tabox_config.py /home/yf/GitPS/taBOX/tabox_config.py
 echo put tabox_heartbeat.py /home/yf/GitPS/taBOX/tabox_heartbeat.py
-echo put taBOX_MR408001.json /home/yf/GitPS/taBOX/taBOX_MR408001.json
+echo put taBOX_MR402003.json /home/yf/GitPS/taBOX/taBOX_MR402003.json
 echo put taLog.py /home/yf/GitPS/taBOX/taLog.py
 echo put taServer_API.py /home/yf/GitPS/taBOX/taServer_API.py
 echo put taSystemCmd.py /home/yf/GitPS/taBOX/taSystemCmd.py
