@@ -24,6 +24,7 @@ def load_config() -> dict[str, Any]:
         print(f'"CONFIG file not found. 請確保 taBOX.json 配置文件存在於 {CONFIG_FILE}. exit(1).')
         raise SystemExit(1)
 
+    print(f"Loading config from {CONFIG_FILE}...") 
     with CONFIG_FILE.open("r", encoding="utf-8") as config_file:
         loaded = json.load(config_file)
 

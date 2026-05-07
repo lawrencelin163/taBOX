@@ -10,7 +10,7 @@ from taServer_API import _read_linux_mac_address
 from taWifi import WIFI_INTERFACE
 
 
-TA_AUTH_API = "http://192.168.30.136:5001"
+TA_AUTH_API = "http://192.168.0.101:5001"
 REQUEST_TIMEOUT = 12
 
 def _get_device_mac() -> str | None:

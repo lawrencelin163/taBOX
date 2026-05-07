@@ -41,6 +41,8 @@ TA_SERVER_READY_PROBE_INTERVAL_SECONDS = float(BOOTSTRAP_CONFIG.get("ta_server_r
 EXIT_DELAY_SECONDS = float(BOOTSTRAP_CONFIG["exit_delay_seconds"])
 FLASK_PORT = int(FLASK_CONFIG["port"])
 TA_SERVER_BASE_URL = str(CONFIG.get("ta_server", {}).get("base_url", "")).strip()
+INIT_MAC_ID_PREFIX = "MR402"
+INIT_SD_SIZE = "32G"
 
 # Auto-try saved SSIDs should run only once at the beginning of a provisioning cycle.
 BOOTSTRAP_ATTEMPTED = False
@@ -49,7 +51,7 @@ STARTUP_CONNECTED_SSID: str | None = None
 
 def run_cmd(command: list[str], timeout: int = 20, extra_env: dict[str, str] | None = None) -> tuple[int, str, str]:
     env = os.environ.copy()
-    env["LC_ALL"] = "C"
+    env["LC_ALL"] = "C.UTF-8"
     if extra_env:
         env.update(extra_env)
     try:
@@ -218,6 +220,7 @@ def save_wifi_credentials(ssid: str, password: str) -> None:
 
 def load_wifi_credentials() -> list[tuple[str, str]]:
     saved_networks = _normalize_saved_networks(SAVED_NETWORKS.get("saved_networks", []))
+    print(f"Loaded saved Wi-Fi credentials: {[entry['ssid_id'] for entry in saved_networks]}")
     return [(entry["ssid_id"], entry["password"]) for entry in saved_networks]
 
 
@@ -378,6 +381,27 @@ def finalize_connected_and_login(ssid: str, source: str) -> None:
         f"(ssid={ssid}, source={source})"
     )
 
+
+
+def chk_Init_Mac() -> int:
+    log_bootstrap("[bootstrap] check taBOX_Mxxx.json 在不在.....")
+    project_root = Path(__file__).resolve().parent
+    candidates = sorted(project_root.glob("taBOX_M*.json"))
+    if candidates:
+        log_bootstrap(f"[bootstrap] found config: {candidates[0].name}")
+        return 1
+
+    log_bootstrap(
+        "[bootstrap] taBOX_Mxxx.json not found, run Init_Mac "
+        f"(prefix={INIT_MAC_ID_PREFIX}, sd_size={INIT_SD_SIZE})"
+    )
+
+    from Init_Mac import init_mac
+
+    output_path = init_mac(INIT_MAC_ID_PREFIX, INIT_SD_SIZE)
+    log_bootstrap(f"[bootstrap] generated config: {output_path.name}")
+    return 1
+    
 
 def bootstrap_network_on_start() -> bool:
     global BOOTSTRAP_ATTEMPTED
@@ -553,6 +577,7 @@ def captive_catch_all(_path: str):
 
 
 if __name__ == "__main__":
+    chk_Init_Mac()
     should_start_portal = bootstrap_network_on_start()
     if not should_start_portal:
         log_bootstrap("[bootstrap] provisioning portal skipped (auto-connect already successful)")

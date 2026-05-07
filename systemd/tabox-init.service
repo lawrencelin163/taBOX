@@ -14,6 +14,7 @@ Environment=WIFI_INTERFACE=wlan0
 Environment=AP_SSID=taBOX-Setup
 Environment=AP_PASSWORD=12345678
 Environment=AP_IPV4_CIDR=10.42.0.1/24
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/home/yf/GitPS/taBOX/scripts/start_init.sh
 # Do NOT restart when the program exits 0 (= auto-connect succeeded).
 # Only restart if the process crashes unexpectedly (non-zero exit).
