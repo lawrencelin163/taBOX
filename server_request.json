@@ -1,0 +1,20 @@
+{
+    "file_copy": 
+    [
+        ["app.py",              "/home/yf/GitPS/taBOX/app.py"],
+        ["Init_Mac.py",         "/home/yf/GitPS/taBOX/Init_Mac.py"],
+        ["tabox_config.py",     "/home/yf/GitPS/taBOX/tabox_config.py"],
+        ["tabox_heartbeat.py",  "/home/yf/GitPS/taBOX/tabox_heartbeat.py"],
+        ["taLog.py",            "/home/yf/GitPS/taBOX/taLog.py"],
+        ["taBOX_MR508002.json", "/home/yf/GitPS/taBOX/taBOX_MR508002.json"],
+        ["taServer_API.py",     "/home/yf/GitPS/taBOX/taServer_API.py"],
+        ["taSystemCmd.py",      "/home/yf/GitPS/taBOX/taSystemCmd.py"],
+        ["taWifi.py",           "/home/yf/GitPS/taBOX/taWifi.py"],
+        ["taBOX_MR508002.json", "/home/yf/GitPS/taBOX/taBOX_MR508002.json"]
+    ],
+    "exec_comd": 
+    [
+        "chmod 666 /home/yf/GitPS/taBOX/taBOX_MR508002.json", 
+        "Restart-taBOX-heartbeat"
+    ]
+}
