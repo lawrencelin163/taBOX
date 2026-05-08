@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
@@ -16,7 +17,8 @@ from taSystemCmd import _run_cmd, _run_systemctl
 from taWifi import WIFI_INTERFACE
 from taLog import _self_update_print, _append_self_update_log
 
-taServer_API_Version = "V 260502-1613"
+taServer_API_Version = "V 260508-1421"
+# V 260508-1421 : 增加 server_request.json 的 deferred exec 支援，讓 server 可以指定某些指令在 finalize 後執行（例如重啟 heartbeat）。
 # V 260502b    : action_cmd / action_value 直接從 payload 讀取，不再用 action_string | split。
 # V 260502b    : server_request 改名為 CopyFiles。
 # V 260502 SRQ : 增加 server_request.json 執行流程，支援 file_copy 覆蓋與 exec_comd 執行。
@@ -211,6 +213,23 @@ def _run_deferred_exec_commands(deferred_exec_list: list[str]) -> None:
             raise SystemExit(0)
 
 
+def _run_power_action(action_cmd: str) -> tuple[bool, str]:
+    normalized = action_cmd.strip().lower()
+    if normalized == "reboot":
+        args = ["reboot"]
+    elif normalized in ("shutdown", "poweroff"):
+        args = ["poweroff"]
+    else:
+        return False, f"unsupported power action: {action_cmd}"
+
+    code, out, err = _run_systemctl(args, timeout=20)
+    if code != 0:
+        reason = err or out or str(code)
+        return False, f"{normalized} failed: {reason}"
+
+    return True, f"{normalized} command triggered"
+
+
 def _handle_copyfiles_request(action_value: str | None) -> tuple[bool, str, list[str]]:
     if not action_value:
         return False, "missing action_value for server request", []
@@ -220,20 +239,53 @@ def _handle_copyfiles_request(action_value: str | None) -> tuple[bool, str, list
     extract_dir: Path | None = None
     raw_url = action_value.strip()
     deferred_exec_list: list[str] = []
+    max_attempts = 5
 
     try:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         tmp_dir = Path("Temp")
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp_zip_path = tmp_dir / f"server_request_{ts}.zip"
-        extract_dir = tmp_dir / f"server_request_{ts}_extracted"
+        file_count = 0
+        last_retry_error = ""
 
-        _self_update_print(f"server request download: {raw_url}")
-        urllib.request.urlretrieve(raw_url, str(tmp_zip_path))                               # 下載檔案
-        file_count = _extract_zip_to_target(tmp_zip_path, extract_dir)                       # 解壓縮檔案到 tmp_zip_path
-        _self_update_print(f"server request extracted files={file_count} to {extract_dir}")  # 存到 log
+        for attempt in range(1, max_attempts + 1):
+            tmp_zip_path = tmp_dir / f"server_request_{ts}_{attempt}.zip"
+            extract_dir = tmp_dir / f"server_request_{ts}_{attempt}_extracted"
 
-        request_json_path = _find_extracted_source_file(extract_dir, "server_request.json")  # server 檔案的描述，server 提供給 mac 的
+            try:
+                _self_update_print(f"server request download attempt {attempt}/{max_attempts}: {raw_url}")
+                urllib.request.urlretrieve(raw_url, str(tmp_zip_path))
+
+                if not tmp_zip_path.exists() or tmp_zip_path.stat().st_size <= 0:
+                    raise RuntimeError("downloaded zip is missing or empty")
+
+                file_count = _extract_zip_to_target(tmp_zip_path, extract_dir)
+                if file_count <= 0:
+                    raise RuntimeError("zip extracted 0 files")
+
+                _self_update_print(f"server request extracted files={file_count} to {extract_dir}")
+                break
+            except Exception as exc:  # pylint: disable=broad-except
+                last_retry_error = str(exc)
+                _self_update_print(
+                    f"server request download/extract failed ({attempt}/{max_attempts}): {last_retry_error}"
+                )
+                try:
+                    if extract_dir.exists():
+                        shutil.rmtree(extract_dir)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                try:
+                    if tmp_zip_path.exists():
+                        tmp_zip_path.unlink()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
+                if attempt == max_attempts:
+                    return False, f"server request download/extract failed after {max_attempts} attempts: {last_retry_error}", []
+
+        # server 檔案的描述，server 提供給 mac 的 指令與檔案資訊都放在 zip 裡的 server_request.json。
+        request_json_path = _find_extracted_source_file(extract_dir, "server_request.json")  
         if request_json_path is None:
             return False, "server_request.json not found in downloaded package", []
 
@@ -244,7 +296,7 @@ def _handle_copyfiles_request(action_value: str | None) -> tuple[bool, str, list
 
         copy_items = _normalize_file_copy_items(request_payload.get("file_copy"))
         if not copy_items:
-            return False, "server request missing valid file_copy entries", []
+            _self_update_print("server request: 沒有檔案需要 Copy")
 
         copied_count = 0
         for src_raw, dst_raw in copy_items:
@@ -300,10 +352,15 @@ def _handle_copyfiles_request(action_value: str | None) -> tuple[bool, str, list
             pass
 
 
-def _reply_action_timestamp(action_cmd: str) -> tuple[bool, str, str]:
+def _reply_action_timestamp(action_cmd: str, reply_text: str | None = None) -> tuple[bool, str, str]:
     utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
-    replystr = f"{utc_time}"
-    api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{replystr}"
+    raw_reply = utc_time
+    if reply_text:
+        extra = str(reply_text).strip()
+        if extra:
+            raw_reply = f"{utc_time}{extra}"
+    encoded_reply = urllib.parse.quote(raw_reply, safe="")
+    api_url = f"{TA_SERVER_URL}/heartbeat/{MAC_TOKEN}:{MAC_ADDRESS}:{encoded_reply}"
     req = urllib.request.Request(api_url, method="GET")
 
     try:
@@ -321,11 +378,11 @@ def _reply_action_timestamp(action_cmd: str) -> tuple[bool, str, str]:
         return False, f"Reply exception ({action_cmd}): {exc}", api_url
 
 
-def _finalize_action(action_cmd: str, ok: bool, detail: str) -> str:
+def _finalize_action(action_cmd: str, ok: bool, detail: str, reply_text: str | None = None) -> str:
     status_text = "success" if ok else "failed"
     _self_update_print(f"[{action_cmd}] {status_text}: {detail}")
 
-    reply_ok, reply_msg, reply_api_url = _reply_action_timestamp(action_cmd)
+    reply_ok, reply_msg, reply_api_url = _reply_action_timestamp(action_cmd, reply_text=reply_text)
     if reply_ok:
         _self_update_print(reply_msg)
     else:
@@ -404,9 +461,18 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
 
                 if action_cmd == "CopyFiles":
                     ok, server_request_msg, deferred_exec_list = _handle_copyfiles_request(action_value)
-                    _finalize_action(action_cmd, ok, server_request_msg)
+                    finalize_reply_text = None
+                    if not ok and "failed after 5 attempts" in server_request_msg.lower():
+                        finalize_reply_text = "（失敗：下載嘗試5次）"
+                    _finalize_action(action_cmd, ok, server_request_msg, reply_text=finalize_reply_text)
                     if ok:
                         _run_deferred_exec_commands(deferred_exec_list)
+                elif isinstance(action_cmd, str) and action_cmd.strip().lower() in ("reboot", "shutdown", "poweroff"):
+                    # Power actions must reply success to server first, then execute locally.
+                    _finalize_action(action_cmd, True, f"{action_cmd} acknowledged; execute after finalize")
+                    power_ok, power_msg = _run_power_action(action_cmd)
+                    status_text = "success" if power_ok else "failed"
+                    _self_update_print(f"[{action_cmd}] {status_text}: {power_msg}")
                         
             except json.JSONDecodeError:
                 mac_id = None

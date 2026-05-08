@@ -1,10 +1,6 @@
 {
   "saved_networks": [
-    { "ssid_id": "000",        "password": "00000000" },
-    { "ssid_id": "HOME2",      "password": "J0928550996" },
-    { "ssid_id": "YZ",         "password": "gina860317" },
-    { "ssid_id": "RubyJiro",   "password": "0918911190" },
-    { "ssid_id": "botanicure", "password": "bt13056907" }
+    { "ssid_id": "洪柏正电子",  "password": "a123456789@@" }
   ],
   "ta_server": {
     "base_url": "https://tabox.onrender.com/api/mac",
