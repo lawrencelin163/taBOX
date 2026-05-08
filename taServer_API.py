@@ -17,12 +17,24 @@ from taSystemCmd import _run_cmd, _run_systemctl
 from taWifi import WIFI_INTERFACE
 from taLog import _self_update_print, _append_self_update_log
 
-taServer_API_Version = "V 260508-1421"
-# V 260508-1421 : 增加 server_request.json 的 deferred exec 支援，讓 server 可以指定某些指令在 finalize 後執行（例如重啟 heartbeat）。
+taServer_API_Version = "V 260508-1540"  # 增加 server_request.json 的 deferred exec 支援，讓 server 可以指定某些指令在 finalize 後執行（例如重啟 heartbeat）。
+# V 260508-1540 : 增加 server_request.json 的 deferred exec 支援，讓 server 可以指定某些指令在 finalize 後執行（例如重啟 heartbeat）。
 # V 260502b    : action_cmd / action_value 直接從 payload 讀取，不再用 action_string | split。
 # V 260502b    : server_request 改名為 CopyFiles。
 # V 260502 SRQ : 增加 server_request.json 執行流程，支援 file_copy 覆蓋與 exec_comd 執行。
 # V 260502     : heartbeat 只處理 server_request，移除其他舊 cmd 流程。
+
+
+#現在可以這樣寫 exec_comd
+#只 copy 檔案, 沒有 command 執行
+#  "exec_comd": []
+#}只重啟 heartbeat，自動在 finalize 後退出
+#  "exec_comd": [ "Restart-taBOX-heartbeat" ]
+#直接使用原本 shell / systemctl 指令也可以
+#  "exec_comd": [
+#    "sudo systemctl stop openclaw-gateway-1.service",
+#    "sudo systemctl restart openclaw-gateway-1.service"
+#  ]
 
 CONFIG = load_config()
 TA_SERVER_CONFIG = CONFIG["ta_server"]
@@ -163,18 +175,45 @@ def _resolve_named_exec_command(cmd_text: str) -> tuple[str, str]:
     resolved = named_commands.get(normalized, "")
     return normalized, resolved
 
-#現在可以這樣寫 exec_comd
-#只 copy 檔案, 沒有 command 執行
-#  "exec_comd": []
-#}只重啟 heartbeat，自動在 finalize 後退出
-#  "exec_comd": [ "Restart-taBOX-heartbeat" ]
-#直接使用原本 shell / systemctl 指令也可以
-#  "exec_comd": [
-#    "sudo systemctl stop openclaw-gateway-1.service",
-#    "sudo systemctl restart openclaw-gateway-1.service"
-#  ]
+# reboot, powerdown, shutdown 的指令可能會有很多種寫法，
+# 嘗試解析出來，以作爲 延後指令，先送出 finalize, 再執行實際的動作。
+def _parse_power_action_text(cmd_text: str) -> str | None:
+    try:
+        parts = shlex.split(cmd_text)
+    except ValueError:
+        return None
 
+    if not parts:
+        return None
 
+    if parts[0].lower() == "sudo" and len(parts) > 1:
+        parts = parts[1:]
+
+    head = Path(parts[0]).name.lower()
+
+    if head == "reboot":
+        return "reboot"
+
+    if head in ("poweroff", "halt"):
+        return "poweroff"
+
+    if head == "shutdown":
+        for arg in parts[1:]:
+            low = arg.lower()
+            if low in ("-r", "--reboot"):
+                return "reboot"
+        return "shutdown"
+
+    if head == "systemctl":
+        subcommands = [Path(token).name.lower() for token in parts[1:] if not token.startswith("-")]
+        if "reboot" in subcommands:
+            return "reboot"
+        if "shutdown" in subcommands:
+            return "shutdown"
+        if any(token in subcommands for token in ("poweroff", "halt")):
+            return "poweroff"
+
+    return None
 
 def _run_exec_command(cmd_text: str) -> tuple[bool, str]:
     _, named_target = _resolve_named_exec_command(cmd_text)
@@ -182,6 +221,18 @@ def _run_exec_command(cmd_text: str) -> tuple[bool, str]:
 
     if actual_cmd.startswith("deferred:"):
         return True, actual_cmd
+
+    power_candidate = actual_cmd
+    if actual_cmd.startswith("systemctl:"):
+        power_candidate = f"systemctl {actual_cmd.split(':', 1)[1].strip()}"
+
+    power_action = _parse_power_action_text(power_candidate)
+    if power_action == "reboot":
+        return True, "deferred:power-reboot"
+    if power_action == "shutdown":
+        return True, "deferred:power-shutdown"
+    if power_action == "poweroff":
+        return True, "deferred:poweroff"
 
     if actual_cmd.startswith("systemctl:"):
         parts = shlex.split(actual_cmd.split(":", 1)[1])
@@ -191,6 +242,7 @@ def _run_exec_command(cmd_text: str) -> tuple[bool, str]:
         return True, actual_cmd
 
     normalized_cmd = actual_cmd.strip()
+
     if normalized_cmd.startswith("sudo "):
         normalized_cmd = normalized_cmd[5:].strip()
 
@@ -211,6 +263,27 @@ def _run_deferred_exec_commands(deferred_exec_list: list[str]) -> None:
         if deferred_cmd == "deferred:restart-self":
             _self_update_print("deferred exec: restart tabox-heartbeat after finalize")
             raise SystemExit(0)
+        if deferred_cmd == "deferred:power-reboot":
+            _self_update_print("deferred exec: reboot after finalize")
+            power_ok, power_msg = _run_power_action("reboot")
+            status_text = "success" if power_ok else "failed"
+            _self_update_print(f"[reboot] {status_text}: {power_msg}")
+            if power_ok:
+                raise SystemExit(0)
+        if deferred_cmd == "deferred:power-shutdown":
+            _self_update_print("deferred exec: shutdown after finalize")
+            power_ok, power_msg = _run_power_action("shutdown")
+            status_text = "success" if power_ok else "failed"
+            _self_update_print(f"[shutdown] {status_text}: {power_msg}")
+            if power_ok:
+                raise SystemExit(0)
+        if deferred_cmd == "deferred:poweroff":
+            _self_update_print("deferred exec: poweroff after finalize")
+            power_ok, power_msg = _run_power_action("poweroff")
+            status_text = "success" if power_ok else "failed"
+            _self_update_print(f"[poweroff] {status_text}: {power_msg}")
+            if power_ok:
+                raise SystemExit(0)
 
 
 def _run_power_action(action_cmd: str) -> tuple[bool, str]:
@@ -221,6 +294,10 @@ def _run_power_action(action_cmd: str) -> tuple[bool, str]:
         args = ["poweroff"]
     else:
         return False, f"unsupported power action: {action_cmd}"
+
+    # Important: write an intent log before issuing the power command.
+    # After systemctl reboot/poweroff, the process may terminate immediately.
+    _self_update_print(f"power action requested: {normalized} (finalize already sent)")
 
     code, out, err = _run_systemctl(args, timeout=20)
     if code != 0:
@@ -467,12 +544,18 @@ def taServer_API_mac_heartbeat(replystr: str) -> tuple[bool, str]:
                     _finalize_action(action_cmd, ok, server_request_msg, reply_text=finalize_reply_text)
                     if ok:
                         _run_deferred_exec_commands(deferred_exec_list)
-                elif isinstance(action_cmd, str) and action_cmd.strip().lower() in ("reboot", "shutdown", "poweroff"):
-                    # Power actions must reply success to server first, then execute locally.
-                    _finalize_action(action_cmd, True, f"{action_cmd} acknowledged; execute after finalize")
-                    power_ok, power_msg = _run_power_action(action_cmd)
-                    status_text = "success" if power_ok else "failed"
-                    _self_update_print(f"[{action_cmd}] {status_text}: {power_msg}")
+                elif isinstance(action_cmd, str):
+                    parsed_power_action = _parse_power_action_text(action_cmd)
+                    if not parsed_power_action:
+                        parsed_power_action = action_cmd.strip().lower() if action_cmd.strip().lower() in ("reboot", "shutdown", "poweroff") else None
+
+                    if parsed_power_action:
+                        # Power actions must reply success to server first, then execute locally.
+                        _finalize_action(action_cmd, True, f"{action_cmd} acknowledged; execute after finalize")
+                        power_ok, power_msg = _run_power_action(parsed_power_action)
+                        # 以下 2 行，保留當作「有機會寫到的補充 log」。
+                        status_text = "success" if power_ok else "failed"
+                        _self_update_print(f"[{action_cmd}] {status_text}: {power_msg}")
                         
             except json.JSONDecodeError:
                 mac_id = None
